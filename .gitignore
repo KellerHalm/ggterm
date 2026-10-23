@@ -1,0 +1,9 @@
+/ggterm
+/ggterm.exe
+/bin/
+/dist/
+*.test
+*.out
+coverage.html
+
+.omo/

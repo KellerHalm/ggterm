@@ -57,3 +57,10 @@ prefix = "ctrl+b"
 # [[keys.bindings]]
 # key = "y"                 # default: opens the file manager
 # action = "file_manager"
+
+# Lua plugins are loaded from this directory. Leave enabled empty to load every
+# *.lua file. See examples/plugins/ and docs/PLUGINS.md.
+[plugins]
+# dir = "plugins"
+# enabled = ["clock"]
+# disabled = ["scratch"]

@@ -2,7 +2,7 @@
 
 Кроссплатформенный терминал на Go: эмулятор терминала и основа для мультиплексора, файлового менеджера и мультимедиа из `GGTerm_TZ.md`.
 
-Текущий статус — **Этап 7: видео**. Несколько панелей с произвольной вложенностью, вкладки, detach/attach через фоновый демон, конфигурация TOML/Lua, темы и hot reload, оптимизированный GPU-рендеринг, системные шрифты, настоящие bold/italic и лигатуры, изображения через Kitty Graphics и собственный протокол, файловый менеджер в стиле yazi, а также воспроизведение видео через ffmpeg — в превью файлового менеджера и через graphics-протокол для приложений.
+Текущий статус — **Этап 8: плагины, документация и релиз v1.0**. Несколько панелей с произвольной вложенностью, вкладки, detach/attach через фоновый демон, конфигурация TOML/Lua, темы и hot reload, оптимизированный GPU-рендеринг, системные шрифты, настоящие bold/italic и лигатуры, изображения через Kitty Graphics и собственный протокол, файловый менеджер в стиле yazi, воспроизведение видео через ffmpeg, а также Lua-плагины с командами, биндингами и событиями.
 
 ## Что уже работает
 
@@ -53,6 +53,25 @@
 - Лигатуры включаются автоматически для шрифтов, которые их содержат; `font.ligatures = false` отключает их.
 - Полностью настраиваемые prefix и keybindings, включая отмену и замену стандартных.
 - Hot reload: изменения темы, шрифта, keybindings и оформления подхватываются без перезапуска.
+
+### Плагины
+
+- Плагины — это Lua-файлы в `ggterm/plugins/` (или каталоге из `[plugins]`); загружаются все `*.lua` либо выбранные через `enabled`/`disabled`.
+- API: `ggterm.plugin`, `ggterm.command`, `ggterm.bind`, `ggterm.on`, `ggterm.notify`, `ggterm.status`, `ggterm.input`, `ggterm.action`, `ggterm.state`, `ggterm.active`, `ggterm.tabs`, `ggterm.version`.
+- События `start`, `key`, `tick` (раз в секунду) и `shutdown`; `key` может перехватить клавишу до отправки в панель.
+- Команды плагинов вызываются биндингом `plugin:<name>` из конфига, а плагин может зарегистрировать и собственный биндинг по умолчанию.
+- Плагины исполняются в процессе UI рядом с конфигурационным Lua; daemon их не запускает, поэтому при detach/attach они загружаются заново.
+- Файлы плагинов участвуют в hot reload; при изменении все плагины перезагружаются, а неудачная загрузка откатывает команды, биндинги и хуки этого файла.
+- `ggterm.status` показывает постоянный текст плагина в правой части статус-бара, `ggterm.notify` — временное сообщение.
+- Полное описание API — [`docs/PLUGINS.md`](docs/PLUGINS.md), примеры — [`examples/plugins/`](examples/plugins/).
+
+```lua
+ggterm.plugin({ name = "clock", version = "1.0.0" })
+ggterm.command("clock_toggle", "toggle the clock", function()
+  ggterm.status(os.date("%H:%M:%S"))
+end)
+ggterm.bind("t", "plugin:clock_toggle")
+```
 
 ### GPU-рендеринг и производительность
 
@@ -157,6 +176,9 @@ go build -o ggterm ./cmd/ggterm       # Linux/macOS
 | `--kill` | false | Завершить выбранную сессию и выйти |
 | `--config` | `ggterm/config.toml` в конфиг-каталоге | Путь к TOML- или Lua-конфигу |
 | `--no-config` | false | Игнорировать файл конфигурации |
+| `--plugins-dir` | `ggterm/plugins` в конфиг-каталоге | Каталог Lua-плагинов |
+| `--no-plugins` | false | Не загружать плагины |
+| `--version` | false | Показать версию и выйти |
 
 Переменная `GGTERM_SHELL` задаёт shell, если ни флаг `--shell`, ни конфиг не указали команду.
 
@@ -221,6 +243,15 @@ action = "split_vertical"
 key = "1"
 action = "select_tab"
 arg = 1                   # номера вкладок 1..9
+
+[[keys.bindings]]
+key = "z"
+action = "plugin:clock_toggle"   # команда плагина
+
+[plugins]
+dir = "plugins"           # относительно каталога конфига
+enabled = []              # пусто — все *.lua из каталога
+disabled = []
 ```
 
 Доступные действия: `split_vertical`, `split_horizontal`, `close_pane`, `new_tab`, `close_tab`, `next_tab`, `prev_tab`, `select_tab`, `focus_next`, `focus_left`, `focus_right`, `focus_up`, `focus_down`, `toggle_broadcast`, `file_manager`, `help`, `fullscreen`, `detach`, `quit`. Действие `none` удаляет биндинг. Клавиши записываются как `c`, `ctrl+a`, `shift+slash`, `alt+enter`, `f5`, `up`, `%`, `?`; для команд мультиплексора префикс добавлять не нужно — биндинг всегда срабатывает после prefix.
@@ -243,13 +274,16 @@ ggterm.unbind("q")
 ggterm.theme("nord")
 ggterm.theme_file("themes/my-theme.toml")
 ggterm.set_theme({ cursor = "#ffcc66" })  -- цвета можно задать и точечно
+ggterm.plugin_dir("plugins")              -- каталог плагинов
+ggterm.enable_plugin("clock")
+ggterm.disable_plugin("scratch")
 ```
 
 Доступные опции `set_option`: `session`, `shell`, `cols`, `rows`, `scrollback`, `restore`, `padding`, `decorated`, `font.family`, `font.path`, `font.bold`, `font.italic`, `font.bold_italic`, `font.size`, `font.fallback`, `font.ligatures`, `window.transparent`, `theme`, `keys.prefix`.
 
 Hot reload опрашивает конфиг, Lua и файл темы каждые 0.5 с. Без перезапуска применяются тема, шрифт, keybindings, отступы и decorations; сообщение об успехе или ошибке показывается в статус-баре. `session`, `shell`, `cols`, `rows`, `scrollback` и прозрачность окна применяются только при следующем запуске; `window.transparent` требует перезапуска, потому что режим окна задаётся до старта графического цикла.
 
-Примеры лежат в `examples/config.toml` и `examples/init.lua`.
+Примеры лежат в `examples/config.toml`, `examples/init.lua` и `examples/plugins/`. Полный справочник — [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) и [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
 ## Управление
 
@@ -325,9 +359,11 @@ internal/terminal     парсер VT/ANSI, сетка ячеек, scrollback, �
 internal/mux          панели, дерево сплитов, вкладки, процессы панелей, layout JSON
 internal/fm           модель файлового менеджера, превью, подсветка, файловые операции
 internal/video        ffmpeg-декодер: probe, кадры RGBA, play/pause/seek/stop
-internal/config       TOML/Lua-конфигурация, темы, шрифты, hot reload
+internal/config       TOML/Lua-конфигурация, темы, шрифты, плагины, hot reload
 internal/session      интерфейс, который UI использует для управления мультиплексором
 internal/daemon       фоновый демон, IPC-протокол, удалённый клиент, запуск процесса
+internal/plugin       Lua-плагины: команды, биндинги, события, доступ к состоянию
+internal/version      версия, коммит и дата сборки
 internal/ui           окно Ebitengine, GPU-батчинг, кэш панелей и изображений, шрифты, ввод, keybindings
 ```
 
@@ -361,6 +397,8 @@ CI (`.github/workflows/ci.yml`) собирает и тестирует прое�
 - Файловый менеджер работает с одним выделенным элементом, без корзины и без фонового прогресса длительных операций; удаление необратимо.
 - Видео требует внешнего `ffmpeg`; звук отключён, аппаратное декодирование не используется. Превью декодирует видео в процессе UI, поэтому при открытии файла возможна короткая задержка.
 - Текущий каталог файлового менеджера зависит от OSC 7: оболочки, которые его не отправляют, открывают менеджер в каталоге запуска панели.
+- Плагины выполняются в процессе UI в общем Lua-состоянии, без изоляции и песочницы; при hot reload их переменные сбрасываются, а при detach/attach они загружаются заново. Демон плагины не исполняет.
+- Нет менеджера установки и репозитория плагинов: файлы `.lua` кладутся в каталог вручную; API плагинов пока не стабилен между крупными версиями.
 - Поиск системных шрифтов опирается на имена файлов; шрифты с нестандартными именами подключаются через `font.path`. Из коллекций `.ttc`/`.otc` используется первая гарнитура. Шрифты, установленные после запуска, находятся после перезапуска (индекс каталогов кэшируется).
 - Для CJK по-прежнему нужен `font.fallback` (путь или имя семейства, если оно совпадает с именем файла); без fallback широкие символы занимают две ячейки, но могут отображаться как отсутствующий глиф.
 - Размытие фона не поддерживается: доступны только прозрачность через alpha-канал фона и decorations окна.
@@ -378,6 +416,6 @@ CI (`.github/workflows/ci.yml`) собирает и тестирует прое�
 - [x] Этап 5. Графика: свой протокол и Kitty Graphics
 - [x] Этап 6. Файловый менеджер в стиле yazi
 - [x] Этап 7. Видео через ffmpeg/libav
-- [ ] Этап 8. Плагины, документация, релиз v1.0
+- [x] Этап 8. Плагины, документация, релиз v1.0
 
-Полное техническое задание — `GGTerm_TZ.md`.
+Полное техническое задание — `GGTerm_TZ.md`. Документация: [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), [`docs/PLUGINS.md`](docs/PLUGINS.md), [`docs/RELEASE.md`](docs/RELEASE.md), [`CHANGELOG.md`](CHANGELOG.md).

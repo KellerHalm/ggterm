@@ -49,6 +49,18 @@ func applyLuaFile(settings *Settings, path, dir, fallbackDir string) ([]string, 
 		settings.Keys.Unbind = nil
 		return 0
 	}))
+	L.SetField(module, "plugin_dir", L.NewFunction(func(L *lua.LState) int {
+		settings.Plugins.Dir = resolveRelative(L.CheckString(1), dir, fallbackDir)
+		return 0
+	}))
+	L.SetField(module, "enable_plugin", L.NewFunction(func(L *lua.LState) int {
+		settings.Plugins.Enabled = append(settings.Plugins.Enabled, L.CheckString(1))
+		return 0
+	}))
+	L.SetField(module, "disable_plugin", L.NewFunction(func(L *lua.LState) int {
+		settings.Plugins.Disabled = append(settings.Plugins.Disabled, L.CheckString(1))
+		return 0
+	}))
 	L.SetField(module, "theme", L.NewFunction(func(L *lua.LState) int {
 		name := L.CheckString(1)
 		theme, ok := BuiltinTheme(name)
@@ -227,6 +239,18 @@ func luaSetOption(L *lua.LState, settings *Settings, dir, fallbackDir string) er
 			return err
 		}
 		settings.Keys.Prefix = v
+	case "plugins.dir":
+		v, err := asString()
+		if err != nil {
+			return err
+		}
+		settings.Plugins.Dir = resolveRelative(v, dir, fallbackDir)
+	case "plugins.enabled":
+		table := L.CheckTable(2)
+		settings.Plugins.Enabled = luaStringList(table)
+	case "plugins.disabled":
+		table := L.CheckTable(2)
+		settings.Plugins.Disabled = luaStringList(table)
 	default:
 		return fmt.Errorf("unknown option %q", key)
 	}

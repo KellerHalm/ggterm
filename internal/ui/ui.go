@@ -11,6 +11,7 @@ import (
 
 	"ggterm/internal/config"
 	"ggterm/internal/mux"
+	"ggterm/internal/plugin"
 	"ggterm/internal/session"
 )
 
@@ -76,6 +77,9 @@ type game struct {
 	showHelp  bool
 	detached  bool
 
+	plugins      *plugin.Manager
+	pluginStatus string
+
 	chars []rune
 	keys  []ebiten.Key
 
@@ -107,8 +111,14 @@ func Run(s session.Session, opts Options) error {
 		done:    opts.Done,
 		reload:  opts.Reload,
 	}
+	g.plugins = plugin.New(g)
+	defer g.plugins.Close()
+	pluginErrs := g.plugins.Sync(settings.Plugins)
 	if err := g.applySettings(settings, true); err != nil {
 		return err
+	}
+	if len(pluginErrs) > 0 {
+		g.notify(pluginErrors(pluginErrs), 6*time.Second)
 	}
 	ebiten.SetWindowDecorated(settings.Decorated)
 
@@ -135,7 +145,11 @@ func (g *game) applySettings(settings config.Settings, initial bool) error {
 	if err != nil {
 		return err
 	}
-	bindings, prefix, err := buildKeymap(settings.Keys)
+	var pluginBindings []config.Binding
+	if g.plugins != nil {
+		pluginBindings = g.plugins.Bindings()
+	}
+	bindings, prefix, err := buildKeymap(settings.Keys, pluginBindings)
 	if err != nil {
 		return err
 	}
@@ -192,9 +206,23 @@ func (g *game) maybeReload() {
 	if !changed {
 		return
 	}
+	var pluginNotices []error
+	if g.plugins != nil {
+		pluginNotices = g.plugins.Sync(settings.Plugins)
+	}
 	if err := g.applySettings(settings, false); err != nil {
 		g.notify("config: "+err.Error(), 5*time.Second)
 		return
+	}
+	if len(pluginNotices) > 0 {
+		g.notify(pluginErrors(pluginNotices), 6*time.Second)
+		return
+	}
+	if g.plugins != nil {
+		if infos := g.plugins.Infos(); len(infos) > 0 {
+			g.notify("config reloaded, plugins: "+pluginsLabel(infos), 3*time.Second)
+			return
+		}
 	}
 	g.notify("config reloaded", 2*time.Second)
 }
@@ -213,6 +241,9 @@ func (g *game) currentNotice() string {
 
 func (g *game) Update() error {
 	g.maybeReload()
+	if g.plugins != nil && g.plugins.Tick() {
+		return ebiten.Termination
+	}
 	if g.done != nil {
 		select {
 		case <-g.done:
@@ -292,6 +323,19 @@ func (g *game) handleInput(view mux.View) error {
 	for _, key := range keys {
 		if isModifierKey(key) {
 			continue
+		}
+
+		if g.plugins != nil && g.plugins.HasHook("key") {
+			chord := keyChordName(key, mods)
+			consumed, terminate := g.plugins.FireKey(chord, mods.ctrl, mods.alt, mods.shift, g.prefixing)
+			if terminate {
+				return ebiten.Termination
+			}
+			if consumed {
+				g.prefixing = false
+				consumedChars = true
+				continue
+			}
 		}
 
 		if g.prefixing {
@@ -471,6 +515,14 @@ func (g *game) runAction(binding keyBinding, view mux.View) bool {
 	case actionQuit:
 		g.session.Quit()
 		return true
+	case actionCommand:
+		if g.plugins != nil {
+			handled, terminate := g.plugins.RunCommand(binding.command, binding.arg)
+			if !handled {
+				g.notify("plugin: unknown command "+binding.command, 3*time.Second)
+			}
+			return terminate
+		}
 	}
 	return false
 }

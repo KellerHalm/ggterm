@@ -14,6 +14,7 @@ import (
 	"ggterm/internal/config"
 	"ggterm/internal/mux"
 	"ggterm/internal/terminal"
+	"ggterm/internal/version"
 )
 
 func Test_keySequence(t *testing.T) {
@@ -127,7 +128,7 @@ func Test_lookupBinding(t *testing.T) {
 		{"alt blocks", ebiten.KeyC, modifiers{alt: true}, actionNone, 0, false},
 		{"unbound", ebiten.KeyEscape, modifiers{}, actionNone, 0, false},
 	}
-	keymap, _, err := buildKeymap(config.Default().Keys)
+	keymap, _, err := buildKeymap(config.Default().Keys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func Test_lookupBinding(t *testing.T) {
 }
 
 func Test_isPrefixKey(t *testing.T) {
-	keymap, prefix, err := buildKeymap(config.Default().Keys)
+	keymap, prefix, err := buildKeymap(config.Default().Keys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +210,7 @@ func Test_buildKeymapOverrides(t *testing.T) {
 		{Key: "q", Action: "none"},
 		{Key: "1", Action: "select_tab", Arg: 3},
 	}
-	bindings, prefix, err := buildKeymap(keys)
+	bindings, prefix, err := buildKeymap(keys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func Test_buildKeymapReplace(t *testing.T) {
 	keys := config.Default().Keys
 	keys.Replace = true
 	keys.Bindings = []config.Binding{{Key: "x", Action: "quit"}}
-	bindings, _, err := buildKeymap(keys)
+	bindings, _, err := buildKeymap(keys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func Test_buildKeymapReplace(t *testing.T) {
 func Test_buildKeymapInvalidAction(t *testing.T) {
 	keys := config.Default().Keys
 	keys.Bindings = []config.Binding{{Key: "x", Action: "explode"}}
-	if _, _, err := buildKeymap(keys); err == nil {
+	if _, _, err := buildKeymap(keys, nil); err == nil {
 		t.Fatal("expected an unknown action error")
 	}
 }
@@ -280,13 +281,13 @@ func Test_applySettings(t *testing.T) {
 
 func Test_helpLines(t *testing.T) {
 	g := &game{prefix: keyBinding{label: "Ctrl+B"}}
-	keymap, _, err := buildKeymap(config.Default().Keys)
+	keymap, _, err := buildKeymap(config.Default().Keys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	g.bindings = keymap
 	lines := g.helpLines()
-	if len(lines) < 5 || lines[0] != "Ctrl+B is the prefix key." {
+	if len(lines) < 6 || lines[0] != "ggterm "+version.String() || lines[1] != "Ctrl+B is the prefix key." {
 		t.Errorf("help = %v", lines)
 	}
 	foundRange := false
@@ -501,5 +502,53 @@ func Test_fitText(t *testing.T) {
 	}
 	if got := fitText("hello world", width/2, face); got == "hello world" || got == "" {
 		t.Errorf("fitted = %q, want truncated text", got)
+	}
+}
+
+func Test_buildKeymapPluginCommand(t *testing.T) {
+	keys := config.Default().Keys
+	bindings, _, err := buildKeymap(keys, []config.Binding{
+		{Key: "z", Action: "plugin:hello", Arg: 3, Desc: "say hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, ok := lookupBinding(bindings, ebiten.KeyZ, modifiers{})
+	if !ok {
+		t.Fatal("plugin binding missing")
+	}
+	if binding.action != actionCommand || binding.command != "hello" || binding.arg != 3 {
+		t.Errorf("binding = %+v", binding)
+	}
+	if binding.desc != "say hello" {
+		t.Errorf("desc = %q", binding.desc)
+	}
+
+	keys.Unbind = []string{"z"}
+	bindings, _, err = buildKeymap(keys, []config.Binding{{Key: "z", Action: "plugin:hello"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lookupBinding(bindings, ebiten.KeyZ, modifiers{}); ok {
+		t.Error("user unbind should remove the plugin binding")
+	}
+}
+
+func Test_keyChordName(t *testing.T) {
+	tests := []struct {
+		key  ebiten.Key
+		mods modifiers
+		want string
+	}{
+		{ebiten.KeyA, modifiers{ctrl: true}, "ctrl+a"},
+		{ebiten.KeyDigit5, modifiers{shift: true}, "shift+5"},
+		{ebiten.KeyArrowLeft, modifiers{alt: true}, "alt+left"},
+		{ebiten.KeyF5, modifiers{}, "f5"},
+		{ebiten.KeySlash, modifiers{ctrl: true, shift: true}, "ctrl+shift+slash"},
+	}
+	for _, test := range tests {
+		if got := keyChordName(test.key, test.mods); got != test.want {
+			t.Errorf("%v %+v = %q, want %q", test.key, test.mods, got, test.want)
+		}
 	}
 }

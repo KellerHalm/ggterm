@@ -74,10 +74,11 @@ type Settings struct {
 	Padding    int
 	Decorated  bool
 
-	Font   Font
-	Window Window
-	Theme  Theme
-	Keys   Keys
+	Font    Font
+	Window  Window
+	Theme   Theme
+	Keys    Keys
+	Plugins Plugins
 }
 
 // Default returns a fresh copy of the built-in configuration.
@@ -112,6 +113,8 @@ type Overrides struct {
 	Scrollback *int
 	Restore    *bool
 	FontSize   *float64
+	PluginsDir *string
+	NoPlugins  *bool
 }
 
 // Result is the resolved configuration plus every file that was read. The
@@ -182,12 +185,19 @@ type keysTable struct {
 	Unbind   []string       `toml:"unbind"`
 }
 
+type pluginsTable struct {
+	Dir      *string  `toml:"dir"`
+	Enabled  []string `toml:"enabled"`
+	Disabled []string `toml:"disabled"`
+}
+
 type fileConfig struct {
 	General generalTable `toml:"general"`
 	Font    fontTable    `toml:"font"`
 	Window  windowTable  `toml:"window"`
 	Theme   themeTable   `toml:"theme"`
 	Keys    keysTable    `toml:"keys"`
+	Plugins pluginsTable `toml:"plugins"`
 }
 
 // ConfigDir returns the directory that stores ggterm configuration.
@@ -231,8 +241,13 @@ func (l Loader) Load() (Result, error) {
 	settings := Default()
 	result := Result{Settings: settings}
 	if l.Disable {
-		l.applyOverrides(&result.Settings)
-		return result, validate(result.Settings)
+		resolvePlugins(&settings, "")
+		l.applyOverrides(&settings)
+		if err := validate(settings); err != nil {
+			return Result{Settings: settings}, err
+		}
+		result.Settings = settings
+		return result, nil
 	}
 
 	tomlPath, luaPath, explicit := l.paths()
@@ -267,6 +282,7 @@ func (l Loader) Load() (Result, error) {
 	}
 
 	l.applyOverrides(&settings)
+	resolvePlugins(&settings, tomlDir)
 	if err := validate(settings); err != nil {
 		return Result{Settings: settings}, err
 	}
@@ -325,6 +341,12 @@ func (l Loader) applyOverrides(settings *Settings) {
 	}
 	if o.FontSize != nil {
 		settings.Font.Size = *o.FontSize
+	}
+	if o.PluginsDir != nil {
+		settings.Plugins.Dir = *o.PluginsDir
+	}
+	if o.NoPlugins != nil && *o.NoPlugins {
+		settings.Plugins = Plugins{Off: true}
 	}
 }
 
@@ -458,6 +480,12 @@ func applyTOMLFile(settings *Settings, path, dir string, files *[]string) error 
 		})
 	}
 	settings.Keys.Unbind = append(settings.Keys.Unbind, file.Keys.Unbind...)
+
+	if file.Plugins.Dir != nil {
+		settings.Plugins.Dir = resolvePath(dir, *file.Plugins.Dir)
+	}
+	settings.Plugins.Enabled = append(settings.Plugins.Enabled, file.Plugins.Enabled...)
+	settings.Plugins.Disabled = append(settings.Plugins.Disabled, file.Plugins.Disabled...)
 	return nil
 }
 

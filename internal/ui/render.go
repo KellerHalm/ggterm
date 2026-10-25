@@ -414,6 +414,9 @@ func (g *game) drawStatusBar(screen *ebiten.Image, view mux.View) {
 	if view.Broadcast {
 		right = "BROADCAST "
 	}
+	if g.pluginStatus != "" {
+		right += g.pluginStatus + " "
+	}
 	right += g.currentNotice()
 	rightWidth := text.Advance(right, g.face)
 	maxLeft := width - rightWidth

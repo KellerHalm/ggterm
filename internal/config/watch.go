@@ -28,6 +28,7 @@ func NewWatcher(loader Loader, initial Result) *Watcher {
 		settings: initial.Settings,
 	}
 	w.files = loader.watchPaths(initial.Files)
+	w.addPluginDir(initial.Settings.Plugins)
 	w.capture()
 	return w
 }
@@ -52,8 +53,39 @@ func (w *Watcher) Poll() (Settings, bool, error) {
 	}
 	w.settings = result.Settings
 	w.files = w.loader.watchPaths(result.Files)
+	w.addPluginDir(result.Settings.Plugins)
 	w.capture()
 	return w.settings, true, nil
+}
+
+// addPluginDir watches the plugin directory itself so adding or removing a
+// plugin file triggers a reload. Individual files are added by the plugin
+// manager, which uses its own stamps for fine-grained reloads.
+func (w *Watcher) addPluginDir(p Plugins) {
+	if p.Off {
+		return
+	}
+	dir := p.Dir
+	if dir == "" {
+		dir = DefaultPluginDir()
+	}
+	if dir == "" {
+		return
+	}
+	seen := make(map[string]bool, len(w.files)+1)
+	for _, path := range w.files {
+		seen[path] = true
+	}
+	if !seen[dir] {
+		w.files = append(w.files, dir)
+		seen[dir] = true
+	}
+	for _, path := range DiscoverPluginFiles(p) {
+		if !seen[path] {
+			w.files = append(w.files, path)
+			seen[path] = true
+		}
+	}
 }
 
 func (w *Watcher) changed() bool {

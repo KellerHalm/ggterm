@@ -21,3 +21,11 @@ ggterm.bind("q", "none") -- remove a default binding
 
 -- Override individual colours.
 -- ggterm.set_theme({ cursor = "#ffcc66" })
+
+-- Plugins are loaded from <config dir>/plugins unless [plugins] says otherwise.
+-- ggterm.plugin_dir("plugins")
+-- ggterm.enable_plugin("clock")
+-- ggterm.disable_plugin("scratch")
+
+-- Bind a key to a plugin command (the plugin can register one too).
+-- ggterm.bind("z", "plugin:clock_toggle")

@@ -17,6 +17,7 @@ import (
 	"ggterm/internal/mux"
 	"ggterm/internal/session"
 	"ggterm/internal/ui"
+	"ggterm/internal/version"
 )
 
 func main() {
@@ -43,7 +44,15 @@ func run() error {
 	socketFlag := flag.String("socket", "", "daemon endpoint (internal)")
 	configPath := flag.String("config", "", "config file (default: ggterm/config.toml in the config directory)")
 	noConfig := flag.Bool("no-config", false, "ignore the config file and use built-in defaults")
+	pluginsDir := flag.String("plugins-dir", "", "plugin directory (default: ggterm/plugins in the config directory)")
+	noPlugins := flag.Bool("no-plugins", false, "disable Lua plugins")
+	printVersion := flag.Bool("version", false, "print the ggterm version and exit")
 	flag.Parse()
+
+	if *printVersion {
+		fmt.Println("ggterm " + version.String())
+		return nil
+	}
 
 	setFlags := make(map[string]bool)
 	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
@@ -69,6 +78,12 @@ func run() error {
 	}
 	if setFlags["font-size"] {
 		overrides.FontSize = fontSize
+	}
+	if setFlags["plugins-dir"] {
+		overrides.PluginsDir = pluginsDir
+	}
+	if setFlags["no-plugins"] {
+		overrides.NoPlugins = noPlugins
 	}
 
 	loader := config.Loader{Path: *configPath, Disable: *noConfig, Overrides: overrides}

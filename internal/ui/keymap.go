@@ -8,6 +8,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 
 	"ggterm/internal/config"
+	"ggterm/internal/version"
 )
 
 type action uint8
@@ -33,15 +34,17 @@ const (
 	actionFullscreen
 	actionDetach
 	actionQuit
+	actionCommand
 )
 
 type keyBinding struct {
-	key    ebiten.Key
-	mods   modifiers
-	label  string
-	action action
-	arg    int
-	desc   string
+	key     ebiten.Key
+	mods    modifiers
+	label   string
+	action  action
+	arg     int
+	desc    string
+	command string
 }
 
 var actionNames = map[string]action{
@@ -144,7 +147,7 @@ func buildDefaultBindings() []keyBinding {
 	return bindings
 }
 
-func buildKeymap(keys config.Keys) ([]keyBinding, keyBinding, error) {
+func buildKeymap(keys config.Keys, pluginBindings []config.Binding) ([]keyBinding, keyBinding, error) {
 	prefix, err := parseKeySpec(keys.Prefix)
 	if err != nil {
 		return nil, keyBinding{}, fmt.Errorf("prefix: %w", err)
@@ -155,6 +158,17 @@ func buildKeymap(keys config.Keys) ([]keyBinding, keyBinding, error) {
 	var bindings []keyBinding
 	if !keys.Replace {
 		bindings = append(bindings, defaultBindings...)
+	}
+	for _, spec := range pluginBindings {
+		binding, err := bindingFromConfig(spec)
+		if err != nil {
+			// A broken plugin binding must not prevent the client from starting.
+			continue
+		}
+		bindings = removeBinding(bindings, binding.key, binding.mods)
+		if binding.action != actionNone {
+			bindings = append(bindings, binding)
+		}
 	}
 	for _, spec := range keys.Unbind {
 		chord, err := parseKeySpec(spec)
@@ -186,6 +200,17 @@ func bindingFromConfig(spec config.Binding) (keyBinding, error) {
 		chord.action = actionNone
 		return chord, nil
 	}
+	if command, ok := pluginCommandName(name); ok {
+		desc := spec.Desc
+		if desc == "" {
+			desc = "run plugin command " + command
+		}
+		chord.action = actionCommand
+		chord.arg = spec.Arg
+		chord.command = command
+		chord.desc = desc
+		return chord, nil
+	}
 	bindingAction, ok := actionNames[name]
 	if !ok {
 		return keyBinding{}, fmt.Errorf("binding %q: unknown action %q", spec.Key, spec.Action)
@@ -202,6 +227,19 @@ func bindingFromConfig(spec config.Binding) (keyBinding, error) {
 	chord.arg = arg
 	chord.desc = desc
 	return chord, nil
+}
+
+func pluginCommandName(name string) (string, bool) {
+	for _, prefix := range []string{"plugin:", "command:"} {
+		if strings.HasPrefix(name, prefix) {
+			command := strings.TrimSpace(name[len(prefix):])
+			if command == "" {
+				return "", false
+			}
+			return command, true
+		}
+	}
+	return "", false
 }
 
 func removeBinding(bindings []keyBinding, key ebiten.Key, mods modifiers) []keyBinding {
@@ -417,19 +455,20 @@ func lookupBinding(bindings []keyBinding, key ebiten.Key, mods modifiers) (keyBi
 }
 
 func (g *game) helpLines() []string {
-	lines := []string{g.prefix.label + " is the prefix key.", ""}
+	lines := []string{"ggterm " + version.String(), g.prefix.label + " is the prefix key.", ""}
 	type group struct {
 		action action
 		keys   []string
 		desc   string
 	}
 	var groups []group
-	index := make(map[action]int)
+	index := make(map[string]int)
 	for _, binding := range g.bindings {
-		position, ok := index[binding.action]
+		key := fmt.Sprintf("%d:%s", binding.action, binding.command)
+		position, ok := index[key]
 		if !ok {
 			position = len(groups)
-			index[binding.action] = position
+			index[key] = position
 			groups = append(groups, group{action: binding.action, desc: binding.desc})
 		}
 		groups[position].keys = append(groups[position].keys, binding.label)
@@ -443,6 +482,11 @@ func (g *game) helpLines() []string {
 	}
 	if len(groups) == 0 {
 		lines = append(lines, "(no keybindings configured)")
+	}
+	if g.plugins != nil {
+		if infos := g.plugins.Infos(); len(infos) > 0 {
+			lines = append(lines, "", "Plugins: "+pluginsLabel(infos))
+		}
 	}
 	lines = append(lines, "", "Mouse: click a pane or tab to focus it.")
 	return lines

@@ -382,6 +382,7 @@ func (s *Server) sendFrame(client *clientConn) {
 			Rect:    layout.Rect,
 			Content: layout.Content,
 			Active:  layout.Active,
+			Dir:     layout.Pane.Dir(),
 		})
 	}
 	client.retain(seen)

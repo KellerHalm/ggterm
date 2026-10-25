@@ -120,6 +120,7 @@ func Test_lookupBinding(t *testing.T) {
 		{"close tab", ebiten.KeyDigit7, modifiers{shift: true}, actionCloseTab, 0, true},
 		{"select tab 1", ebiten.KeyDigit1, modifiers{}, actionSelectTab, 0, true},
 		{"select tab 9", ebiten.KeyDigit9, modifiers{}, actionSelectTab, 8, true},
+		{"file manager", ebiten.KeyY, modifiers{}, actionFileManager, 0, true},
 		{"help", ebiten.KeySlash, modifiers{shift: true}, actionHelp, 0, true},
 		{"quit", ebiten.KeyQ, modifiers{}, actionQuit, 0, true},
 		{"ctrl blocks", ebiten.KeyC, modifiers{ctrl: true}, actionNone, 0, false},

@@ -28,6 +28,7 @@ const (
 	actionFocusUp
 	actionFocusDown
 	actionToggleBroadcast
+	actionFileManager
 	actionHelp
 	actionFullscreen
 	actionDetach
@@ -60,6 +61,9 @@ var actionNames = map[string]action{
 	"focus_down":        actionFocusDown,
 	"toggle_broadcast":  actionToggleBroadcast,
 	"broadcast":         actionToggleBroadcast,
+	"file_manager":      actionFileManager,
+	"fm":                actionFileManager,
+	"yazi":              actionFileManager,
 	"help":              actionHelp,
 	"fullscreen":        actionFullscreen,
 	"toggle_fullscreen": actionFullscreen,
@@ -82,6 +86,7 @@ var actionDescriptions = map[action]string{
 	actionFocusUp:         "focus pane up",
 	actionFocusDown:       "focus pane down",
 	actionToggleBroadcast: "toggle input broadcast",
+	actionFileManager:     "open the file manager",
 	actionHelp:            "toggle this help",
 	actionFullscreen:      "toggle fullscreen",
 	actionDetach:          "detach (session keeps running)",
@@ -109,6 +114,7 @@ var defaultBindingSpecs = []config.Binding{
 	{Key: "up", Action: "focus_up"},
 	{Key: "right", Action: "focus_right"},
 	{Key: "b", Action: "toggle_broadcast"},
+	{Key: "y", Action: "file_manager"},
 	{Key: "?", Action: "help"},
 	{Key: "f", Action: "fullscreen"},
 	{Key: "d", Action: "detach"},

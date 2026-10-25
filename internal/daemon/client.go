@@ -123,6 +123,7 @@ func (c *Client) apply(f frame) {
 			pane = &remotePane{client: c, id: box.ID}
 			c.panes[box.ID] = pane
 		}
+		pane.setDir(box.Dir)
 		view.Panes = append(view.Panes, mux.PaneLayout{
 			Pane:    pane,
 			Rect:    box.Rect,
@@ -311,6 +312,7 @@ type remotePane struct {
 	snap   terminal.Snapshot
 	rev    uint64
 	offset int
+	dir    string
 }
 
 func (p *remotePane) apply(snap terminal.Snapshot, rev uint64) {
@@ -377,6 +379,21 @@ func (p *remotePane) Title() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.snap.Title
+}
+
+func (p *remotePane) setDir(dir string) {
+	p.mu.Lock()
+	p.dir = dir
+	p.mu.Unlock()
+}
+
+func (p *remotePane) Dir() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.dir != "" {
+		return p.dir
+	}
+	return p.snap.Cwd
 }
 
 func (p *remotePane) Alive() bool { return true }
@@ -448,19 +465,33 @@ func ListStatuses() ([]Status, error) {
 	return statuses, nil
 }
 
-// Kill terminates a running session.
+// Kill terminates a running session. It also understands daemons started by
+// older protocol versions, which is useful after an upgrade: such a daemon
+// rejects the current version and keeps the session socket occupied.
 func Kill(socket string) error {
-	conn, err := dialEndpoint(socket, 2*time.Second)
-	if err != nil {
-		return fmt.Errorf("session is not running: %w", err)
+	if !SocketAlive(socket) {
+		return fmt.Errorf("session is not running")
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	enc := gob.NewEncoder(conn)
-	if err := enc.Encode(hello{Version: ProtocolVersion, Action: actionKill}); err != nil {
-		return err
+	for version := ProtocolVersion; version >= 1; version-- {
+		conn, err := dialEndpoint(socket, time.Second)
+		if err != nil {
+			break
+		}
+		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
+		enc := gob.NewEncoder(conn)
+		if err := enc.Encode(hello{Version: version, Action: actionKill}); err != nil {
+			_ = conn.Close()
+			continue
+		}
+		var discard [1]byte
+		_, _ = conn.Read(discard[:])
+		_ = conn.Close()
+		if WaitForSocketClosed(socket, time.Second) == nil {
+			return nil
+		}
 	}
-	var discard [1]byte
-	_, _ = conn.Read(discard[:])
-	return nil
+	if !SocketAlive(socket) {
+		return nil
+	}
+	return fmt.Errorf("session did not terminate")
 }

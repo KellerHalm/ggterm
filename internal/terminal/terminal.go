@@ -17,6 +17,7 @@ type Terminal struct {
 	style      Style
 
 	title string
+	cwd   string
 
 	altGrid   *grid
 	altCursor Cursor
@@ -217,6 +218,7 @@ func (t *Terminal) Snapshot(scrollOffset int) Snapshot {
 		Lines:         lines,
 		Cursor:        cursor,
 		Title:         t.title,
+		Cwd:           t.cwd,
 		ScrollbackLen: sbLen,
 		ScrollOffset:  scrollOffset,
 		AltScreen:     t.altScreen,
@@ -228,6 +230,14 @@ func (t *Terminal) Title() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.title
+}
+
+// Cwd returns the working directory most recently reported by the shell via
+// OSC 7, or an empty string when the application has not reported one.
+func (t *Terminal) Cwd() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.cwd
 }
 
 // ScrollInfo returns the number of scrollback lines and whether the primary

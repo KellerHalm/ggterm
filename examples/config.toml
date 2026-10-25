@@ -53,3 +53,7 @@ prefix = "ctrl+b"
 # key = "1"
 # action = "select_tab"
 # arg = 1
+#
+# [[keys.bindings]]
+# key = "y"                 # default: opens the file manager
+# action = "file_manager"

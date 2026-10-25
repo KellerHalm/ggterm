@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -417,5 +418,24 @@ func Test_Terminal_cursor_visibility(t *testing.T) {
 	snap = term.Snapshot(0)
 	if !snap.Cursor.Visible {
 		t.Error("cursor should be visible after DECTCEM set")
+	}
+}
+
+func Test_Terminal_OSC7_cwd(t *testing.T) {
+	term := New(Config{})
+	sequence := "\x1b]7;file:///tmp/example\x1b\\"
+	want := "/tmp/example"
+	if runtime.GOOS == "windows" {
+		sequence = "\x1b]7;file:///C:/Users/example\x1b\\"
+		want = `C:\Users\example`
+	}
+	if _, err := term.Write([]byte(sequence)); err != nil {
+		t.Fatal(err)
+	}
+	if got := term.Cwd(); got != want {
+		t.Errorf("Cwd = %q, want %q", got, want)
+	}
+	if snap := term.Snapshot(0); snap.Cwd != want {
+		t.Errorf("snapshot Cwd = %q, want %q", snap.Cwd, want)
 	}
 }

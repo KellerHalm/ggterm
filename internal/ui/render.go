@@ -42,7 +42,10 @@ func (g *game) Draw(screen *ebiten.Image) {
 	if g.showBars {
 		g.drawStatusBar(screen, view)
 	}
-	if g.showHelp {
+	if g.files != nil {
+		g.drawFileManager(screen, view, contentY)
+	}
+	if g.showHelp && g.files == nil {
 		g.drawHelp(screen)
 	}
 }
@@ -403,7 +406,7 @@ func (g *game) drawStatusBar(screen *ebiten.Image, view mux.View) {
 	g.rects.reset()
 	g.rects.add(float64(g.padding), y, width, g.cellH, g.theme.BarBackground)
 
-	left := fmt.Sprintf(" %d/%d  %s prefix   ? help", view.ActiveTab+1, len(view.Tabs), g.prefix.label)
+	left := fmt.Sprintf(" %d/%d  %s prefix   y files   ? help", view.ActiveTab+1, len(view.Tabs), g.prefix.label)
 	if g.prefixing {
 		left = " PREFIX  %/\\ split V   \"/- split H   c tab   x close   d detach   ? help"
 	}

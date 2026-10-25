@@ -13,6 +13,7 @@ ggterm.bind("c", "new_tab")
 ggterm.bind("1", "select_tab", 1)
 ggterm.bind("2", "select_tab", 2)
 ggterm.bind("q", "none") -- remove a default binding
+-- ggterm.bind("y", "file_manager") -- already the default: prefix + y
 
 -- Select a built-in theme or load a theme file.
 -- ggterm.theme("nord")

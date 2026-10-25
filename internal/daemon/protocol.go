@@ -9,7 +9,7 @@ import (
 
 // ProtocolVersion is bumped whenever the wire format or message semantics
 // change in an incompatible way.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 const defaultFrameInterval = time.Second / 30
 
@@ -62,6 +62,7 @@ type paneBox struct {
 	Rect    mux.Rect
 	Content mux.Rect
 	Active  bool
+	Dir     string
 }
 
 type paneUpdate struct {

@@ -204,6 +204,17 @@ func attachOrSpawn(name, socket, layoutPath string, cfg mux.Config, restore bool
 		return client, nil
 	}
 
+	if daemon.SocketAlive(socket) {
+		if _, statusErr := daemon.FetchStatus(socket); errors.Is(statusErr, daemon.ErrUnsupported) {
+			if killErr := daemon.Kill(socket); killErr != nil {
+				return nil, fmt.Errorf("terminate incompatible session %q: %w", name, killErr)
+			}
+			if err := daemon.WaitForSocketClosed(socket, 3*time.Second); err != nil {
+				return nil, fmt.Errorf("session %q uses an incompatible daemon: %w", name, err)
+			}
+		}
+	}
+
 	if !daemon.SocketAlive(socket) {
 		exe, exeErr := os.Executable()
 		if exeErr != nil {

@@ -3,11 +3,14 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -256,6 +259,26 @@ func paneText(view mux.View) string {
 	return strings.TrimRight(strings.TrimSpace(sb.String()), "\n")
 }
 
+func TestPaneDirPropagatesToClient(t *testing.T) {
+	starter, socket, _, _ := startTestServer(t, time.Hour)
+	client, err := Attach(socket, 80, 24)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	cwd := t.TempDir()
+	urlPath := filepath.ToSlash(cwd)
+	if runtime.GOOS == "windows" {
+		urlPath = "/" + urlPath
+	}
+	starter.session(0).output <- []byte("]7;file://" + urlPath + "")
+	waitFor(t, "pane cwd", func() bool {
+		view := client.Viewport(80, 24)
+		return len(view.Panes) == 1 && view.Panes[0].Pane.Dir() == filepath.Clean(cwd)
+	})
+}
+
 func TestAbruptDisconnectKeepsSessionRunning(t *testing.T) {
 	starter, socket, _, _ := startTestServer(t, time.Hour)
 
@@ -379,6 +402,46 @@ func TestScrollPositionSynchronizes(t *testing.T) {
 	text := paneText(client.Viewport(80, 24))
 	if strings.Contains(text, "line-099") {
 		t.Errorf("scrolled view still shows the newest line:\n%s", text)
+	}
+}
+
+func TestKillHandlesLegacyDaemon(t *testing.T) {
+	socket := shortSocket(t)
+	listener, err := Listen(socket)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				var greeting hello
+				if err := gob.NewDecoder(conn).Decode(&greeting); err != nil {
+					return
+				}
+				if greeting.Version == 2 && greeting.Action == actionKill {
+					_ = listener.Close()
+					return
+				}
+				_ = gob.NewEncoder(conn).Encode(statusReply{Version: 2})
+			}(conn)
+		}
+	}()
+	t.Cleanup(func() { _ = listener.Close() })
+
+	if err := Kill(socket); err != nil {
+		t.Fatalf("Kill legacy session: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("legacy daemon is still listening")
 	}
 }
 

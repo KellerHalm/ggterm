@@ -30,6 +30,18 @@ func WaitForSocket(socket string, timeout time.Duration) error {
 	return fmt.Errorf("daemon did not start listening on %s", socket)
 }
 
+// WaitForSocketClosed polls until nothing accepts connections on socket.
+func WaitForSocketClosed(socket string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !SocketAlive(socket) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("daemon is still listening on %s", socket)
+}
+
 // Spawn starts exe as a detached background process. Its output is appended to
 // logPath. The new process is not waited for.
 func Spawn(exe string, args []string, logPath, dir string) error {

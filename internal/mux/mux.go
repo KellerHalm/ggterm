@@ -60,6 +60,7 @@ type PaneView interface {
 	ScrollTo(offset int)
 	ResetScroll()
 	Title() string
+	Dir() string
 	Alive() bool
 	Revision() uint64
 	ScrollOffset() int

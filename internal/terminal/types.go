@@ -68,6 +68,7 @@ type Snapshot struct {
 	Lines         [][]Cell
 	Cursor        Cursor
 	Title         string
+	Cwd           string
 	ScrollbackLen int
 	ScrollOffset  int
 	AltScreen     bool

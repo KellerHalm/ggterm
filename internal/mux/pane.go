@@ -128,8 +128,15 @@ func (p *Pane) wait() {
 // ID returns the stable numeric identifier of the pane.
 func (p *Pane) ID() int { return p.id }
 
-// Dir returns the working directory the pane was started in.
-func (p *Pane) Dir() string { return p.dir }
+// Dir returns the working directory of the pane. It follows the shell when it
+// reports changes through OSC 7 and otherwise falls back to the startup
+// directory.
+func (p *Pane) Dir() string {
+	if cwd := p.term.Cwd(); cwd != "" {
+		return cwd
+	}
+	return p.dir
+}
 
 // Command returns the command the pane was started with (empty for the default shell).
 func (p *Pane) Command() string { return p.command }

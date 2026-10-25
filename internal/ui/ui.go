@@ -87,6 +87,8 @@ type game struct {
 	seenPanes     map[int]bool
 	graphicCache  map[uint64]*graphicCacheEntry
 	renderVersion uint64
+
+	files *fileManager
 }
 
 // Run opens the multiplexer window and blocks until it is closed or all panes
@@ -236,6 +238,15 @@ func (g *game) Update() error {
 	g.view = g.session.Viewport(cols, g.contentRows)
 	if g.session.Empty() {
 		return ebiten.Termination
+	}
+
+	if g.files != nil {
+		if err := g.handleFileManagerInput(); err != nil {
+			return err
+		}
+		g.handleFileManagerMouse()
+		g.handleFileManagerWheel()
+		return nil
 	}
 
 	if err := g.handleMouse(g.view); err != nil {
@@ -446,6 +457,8 @@ func (g *game) runAction(binding keyBinding, view mux.View) bool {
 		g.session.FocusDirection(mux.MoveDown)
 	case actionToggleBroadcast:
 		g.session.ToggleBroadcast()
+	case actionFileManager:
+		g.toggleFileManager(view)
 	case actionHelp:
 		g.showHelp = !g.showHelp
 	case actionFullscreen:

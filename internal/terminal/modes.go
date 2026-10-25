@@ -1,5 +1,12 @@
 package terminal
 
+import (
+	"net/url"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
+
 func (t *Terminal) setMode(params []int, enable bool) {
 	private := t.parser.hasPrivate()
 	for _, p := range params {
@@ -67,7 +74,46 @@ func (t *Terminal) executeOSC(data []byte) {
 	if separator < 0 {
 		return
 	}
-	if cmd == 0 || cmd == 2 {
+	switch cmd {
+	case 0, 2:
 		t.title = string(data[separator+1:])
+	case 7:
+		if cwd := parseFileURL(string(data[separator+1:])); cwd != "" {
+			t.cwd = cwd
+		}
 	}
+}
+
+// parseFileURL converts the payload of OSC 7 (usually file://host/path) into a
+// local absolute path. Shells on Windows often send file:///C:/...
+func parseFileURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "file") {
+		return ""
+	}
+	path := parsed.Path
+	if path == "" {
+		path = parsed.Opaque
+	}
+	if path == "" {
+		return ""
+	}
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		path = "//" + parsed.Host + path
+	}
+	path = filepath.FromSlash(path)
+	if runtime.GOOS == "windows" {
+		if len(path) >= 3 && (path[0] == '\\' || path[0] == '/') &&
+			((path[1] >= 'A' && path[1] <= 'Z') || (path[1] >= 'a' && path[1] <= 'z')) && path[2] == ':' {
+			path = path[1:]
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return ""
+	}
+	return filepath.Clean(path)
 }

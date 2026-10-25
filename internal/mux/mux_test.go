@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -302,6 +303,16 @@ func TestPanePumpFeedsTerminalAndTitle(t *testing.T) {
 	session.output <- []byte("\x1b]0;my-title\x07")
 	waitFor(t, func() bool {
 		return m.tabs[0].Active.Title() == "my-title"
+	})
+
+	cwd := t.TempDir()
+	urlPath := filepath.ToSlash(cwd)
+	if runtime.GOOS == "windows" {
+		urlPath = "/" + urlPath
+	}
+	session.output <- []byte("\x1b]7;file://" + urlPath + "\x07")
+	waitFor(t, func() bool {
+		return m.tabs[0].Active.Dir() == filepath.Clean(cwd)
 	})
 }
 

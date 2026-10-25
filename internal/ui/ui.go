@@ -9,6 +9,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"ggterm/internal/config"
 	"ggterm/internal/mux"
 	"ggterm/internal/session"
 )
@@ -19,16 +20,15 @@ var ErrDetached = errors.New("ui: detached")
 
 // Options controls the terminal window.
 type Options struct {
-	FontSize float64         // <=0 => 15
+	Settings config.Settings
+	Reload   func() (config.Settings, bool, error)
 	Done     <-chan struct{} // closes the window when the channel closes
 }
 
 const (
-	padding      = 8
 	minWindowW   = 420
 	minWindowH   = 240
 	cursorBlink  = 530 * time.Millisecond
-	defaultFont  = 15.0
 	tickRate     = 60
 	wheelPerStep = 3
 )
@@ -47,8 +47,15 @@ type tabHit struct {
 
 type game struct {
 	session session.Session
-	face    *text.GoTextFace
+	face    text.Face
 	done    <-chan struct{}
+	reload  func() (config.Settings, bool, error)
+
+	settings config.Settings
+	theme    config.Theme
+	bindings []keyBinding
+	prefix   keyBinding
+	padding  int
 
 	cellW, cellH float64
 	ascent       float64
@@ -60,10 +67,13 @@ type game struct {
 
 	wheelAccum float64
 	lastTitle  string
+	lastPoll   time.Time
+	notice     string
+	noticeTill time.Time
 
-	prefix   bool
-	showHelp bool
-	detached bool
+	prefixing bool
+	showHelp  bool
+	detached  bool
 
 	chars []rune
 	keys  []ebiten.Key
@@ -79,46 +89,109 @@ func Run(s session.Session, opts Options) error {
 	if s == nil {
 		return errors.New("ui: nil session")
 	}
-	size := opts.FontSize
-	if size <= 0 {
-		size = defaultFont
-	}
-	face, metrics, err := newFace(size)
-	if err != nil {
-		return err
+	settings := opts.Settings
+	if settings.Font.Size <= 0 {
+		settings = config.Default()
 	}
 	g := &game{
 		session: s,
-		face:    face,
 		done:    opts.Done,
-		ascent:  metrics.HAscent,
+		reload:  opts.Reload,
 	}
-	g.cellW = text.Advance("M", face)
-	if g.cellW <= 0 {
-		g.cellW = size * 0.6
+	if err := g.applySettings(settings, true); err != nil {
+		return err
 	}
-	g.cellH = math.Ceil(metrics.HAscent + metrics.HDescent)
-	if g.cellH < size {
-		g.cellH = math.Ceil(size * 1.2)
-	}
+	ebiten.SetWindowDecorated(settings.Decorated)
 
 	cols, rows := s.Cells()
 	g.view = s.Viewport(cols, rows)
 	g.lastTitle = viewTitle(g.view)
-	width := int(math.Ceil(float64(cols)*g.cellW)) + 2*padding
-	height := int(math.Ceil(float64(rows+2)*g.cellH)) + 2*padding
+	width := int(math.Ceil(float64(cols)*g.cellW)) + 2*g.padding
+	height := int(math.Ceil(float64(rows+2)*g.cellH)) + 2*g.padding
 	ebiten.SetWindowTitle(windowTitle(g.lastTitle))
 	ebiten.SetWindowSize(clampInt(width, minWindowW, 4096), clampInt(height, minWindowH, 4096))
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(tickRate)
-	err = ebiten.RunGame(g)
+	err := ebiten.RunGame(g)
 	if g.detached && err == nil {
 		return ErrDetached
 	}
 	return err
 }
 
+func (g *game) applySettings(settings config.Settings, initial bool) error {
+	face, metrics, err := loadFace(settings.Font)
+	if err != nil {
+		return err
+	}
+	bindings, prefix, err := buildKeymap(settings.Keys)
+	if err != nil {
+		return err
+	}
+	padding := clampInt(settings.Padding, 0, 64)
+
+	cellW := text.Advance("M", face)
+	if cellW <= 0 {
+		cellW = settings.Font.Size * 0.6
+	}
+	cellH := math.Ceil(metrics.HAscent + metrics.HDescent)
+	if cellH < settings.Font.Size {
+		cellH = math.Ceil(settings.Font.Size * 1.2)
+	}
+
+	g.settings = settings
+	g.face = face
+	g.theme = settings.Theme
+	g.bindings = bindings
+	g.prefix = prefix
+	g.padding = padding
+	g.cellW = cellW
+	g.cellH = cellH
+	g.ascent = metrics.HAscent
+	if !initial {
+		ebiten.SetWindowDecorated(settings.Decorated)
+	}
+	return nil
+}
+
+func (g *game) maybeReload() {
+	if g.reload == nil {
+		return
+	}
+	if time.Since(g.lastPoll) < 500*time.Millisecond {
+		return
+	}
+	g.lastPoll = time.Now()
+
+	settings, changed, err := g.reload()
+	if err != nil {
+		g.notify("config: "+err.Error(), 5*time.Second)
+		return
+	}
+	if !changed {
+		return
+	}
+	if err := g.applySettings(settings, false); err != nil {
+		g.notify("config: "+err.Error(), 5*time.Second)
+		return
+	}
+	g.notify("config reloaded", 2*time.Second)
+}
+
+func (g *game) notify(message string, duration time.Duration) {
+	g.notice = message
+	g.noticeTill = time.Now().Add(duration)
+}
+
+func (g *game) currentNotice() string {
+	if g.notice == "" || time.Now().After(g.noticeTill) {
+		return ""
+	}
+	return g.notice
+}
+
 func (g *game) Update() error {
+	g.maybeReload()
 	if g.done != nil {
 		select {
 		case <-g.done:
@@ -126,11 +199,11 @@ func (g *game) Update() error {
 		default:
 		}
 	}
-	if g.width <= 2*padding || g.height <= 2*padding {
+	if g.width <= 2*g.padding || g.height <= 2*g.padding {
 		return nil
 	}
-	cols := int((float64(g.width) - 2*padding) / g.cellW)
-	totalRows := int((float64(g.height) - 2*padding) / g.cellH)
+	cols := int((float64(g.width) - 2*float64(g.padding)) / g.cellW)
+	totalRows := int((float64(g.height) - 2*float64(g.padding)) / g.cellH)
 	cols = clampInt(cols, 1, 1000)
 	totalRows = clampInt(totalRows, 1, 1000)
 
@@ -191,27 +264,27 @@ func (g *game) handleInput(view mux.View) error {
 			continue
 		}
 
-		if g.prefix {
-			if isPrefixKey(key, mods) {
+		if g.prefixing {
+			if g.isPrefixKey(key, mods) {
 				g.session.WriteInput([]byte{0x02})
-				g.prefix = false
+				g.prefixing = false
 				consumedChars = true
 				typed = true
 				continue
 			}
-			if binding, ok := lookupBinding(key, mods); ok {
-				g.prefix = false
+			if binding, ok := lookupBinding(g.bindings, key, mods); ok {
+				g.prefixing = false
 				consumedChars = true
 				if g.runAction(binding, view) {
 					return ebiten.Termination
 				}
 				continue
 			}
-			g.prefix = false
+			g.prefixing = false
 		}
 
-		if isPrefixKey(key, mods) {
-			g.prefix = true
+		if g.isPrefixKey(key, mods) {
+			g.prefixing = true
 			consumedChars = true
 			continue
 		}
@@ -248,7 +321,7 @@ func (g *game) handleInput(view mux.View) error {
 		typed = true
 	}
 
-	if g.prefix {
+	if g.prefixing {
 		consumedChars = true
 	}
 	if !consumedChars && active != nil {
@@ -310,7 +383,7 @@ func (g *game) handleMouse(view mux.View) error {
 	}
 	x, y := ebiten.CursorPosition()
 	for _, hit := range g.tabHits {
-		if x >= hit.x0 && x < hit.x1 && y >= padding && y < padding+int(g.cellH) {
+		if x >= hit.x0 && x < hit.x1 && y >= g.padding && y < g.padding+int(g.cellH) {
 			g.session.SelectTab(hit.index)
 			return nil
 		}

@@ -16,7 +16,7 @@ import (
 )
 
 func (g *game) Draw(screen *ebiten.Image) {
-	screen.Fill(themeBG)
+	screen.Fill(g.theme.Background)
 	g.paneHits = g.paneHits[:0]
 	g.tabHits = g.tabHits[:0]
 
@@ -26,7 +26,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 		g.drawTabBar(screen, view)
 		topRows = 1
 	}
-	contentY := float64(padding) + float64(topRows)*g.cellH
+	contentY := float64(g.padding) + float64(topRows)*g.cellH
 	for _, layout := range view.Panes {
 		g.drawPane(screen, layout, contentY)
 	}
@@ -39,7 +39,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 }
 
 func (g *game) drawPane(screen *ebiten.Image, layout mux.PaneLayout, contentY float64) {
-	x0 := float64(padding) + float64(layout.Rect.X)*g.cellW
+	x0 := float64(g.padding) + float64(layout.Rect.X)*g.cellW
 	y0 := contentY + float64(layout.Rect.Y)*g.cellH
 	width := float64(layout.Rect.W) * g.cellW
 	height := float64(layout.Rect.H) * g.cellH
@@ -47,10 +47,10 @@ func (g *game) drawPane(screen *ebiten.Image, layout mux.PaneLayout, contentY fl
 	bordered := layout.Rect.W >= 3 && layout.Rect.H >= 3
 	contentX, contentYPos := x0, y0
 	if bordered {
-		borderColor := themeBorder
+		borderColor := g.theme.Border
 		thickness := float32(1)
 		if layout.Active {
-			borderColor = themeBorderActive
+			borderColor = g.theme.BorderActive
 			thickness = 2
 		}
 		drawFrame(screen, x0, y0, width, height, float64(thickness), borderColor)
@@ -130,7 +130,7 @@ func (g *game) drawLine(screen *ebiten.Image, baseX, baseY float64, row int, lin
 }
 
 func (g *game) drawCells(screen *ebiten.Image, baseX, baseY float64, row, startCol, endCol int, value string, style terminal.Style) {
-	fg, bg := cellColors(style)
+	fg, bg := themeColors(g.theme, style)
 	if style.Blink && !blinkVisible() {
 		fg = bg
 	}
@@ -139,7 +139,7 @@ func (g *game) drawCells(screen *ebiten.Image, baseX, baseY float64, row, startC
 	width := float32(float64(endCol-startCol) * g.cellW)
 	height := float32(g.cellH)
 
-	if bg != themeBG {
+	if bg != g.theme.Background {
 		vector.FillRect(screen, float32(x), float32(y), width, height, bg, false)
 	}
 	if strings.TrimSpace(value) != "" {
@@ -156,7 +156,7 @@ func (g *game) drawCells(screen *ebiten.Image, baseX, baseY float64, row, startC
 	}
 }
 
-func drawText(screen *ebiten.Image, face *text.GoTextFace, value string, x, y float32, lineSpacing float64, clr color.Color) {
+func drawText(screen *ebiten.Image, face text.Face, value string, x, y float32, lineSpacing float64, clr color.Color) {
 	opts := &text.DrawOptions{}
 	opts.LayoutOptions.LineSpacing = lineSpacing
 	opts.GeoM.Translate(float64(x), float64(y))
@@ -178,7 +178,7 @@ func (g *game) drawCursor(screen *ebiten.Image, snap terminal.Snapshot, baseX, b
 	}
 	x := baseX + float64(col)*g.cellW
 	y := baseY + float64(row)*g.cellH
-	vector.FillRect(screen, float32(x), float32(y), float32(width), float32(g.cellH), themeCursor, false)
+	vector.FillRect(screen, float32(x), float32(y), float32(width), float32(g.cellH), g.theme.Cursor, false)
 }
 
 func (g *game) drawTabBar(screen *ebiten.Image, view mux.View) {
@@ -186,10 +186,10 @@ func (g *game) drawTabBar(screen *ebiten.Image, view mux.View) {
 	if width <= 0 {
 		return
 	}
-	vector.FillRect(screen, padding, padding, float32(width), float32(g.cellH), themeBarBG, false)
+	vector.FillRect(screen, float32(g.padding), float32(g.padding), float32(width), float32(g.cellH), g.theme.BarBackground, false)
 
-	x := float64(padding)
-	maxX := float64(padding) + width
+	x := float64(g.padding)
+	maxX := float64(g.padding) + width
 	for index, tab := range view.Tabs {
 		if x >= maxX {
 			break
@@ -200,12 +200,12 @@ func (g *game) drawTabBar(screen *ebiten.Image, view mux.View) {
 			break
 		}
 		labelWidth := text.Advance(label, g.face)
-		fg := themeBarFG
+		fg := g.theme.BarForeground
 		if tab.Active {
-			vector.FillRect(screen, float32(x), padding, float32(labelWidth), float32(g.cellH), themeTabActiveBG, false)
-			fg = themeTabActiveFG
+			vector.FillRect(screen, float32(x), float32(g.padding), float32(labelWidth), float32(g.cellH), g.theme.TabActiveBackground, false)
+			fg = g.theme.TabActiveForeground
 		}
-		drawText(screen, g.face, label, float32(x), padding, g.cellH, fg)
+		drawText(screen, g.face, label, float32(x), float32(g.padding), g.cellH, fg)
 		g.tabHits = append(g.tabHits, tabHit{
 			index: index,
 			x0:    int(math.Floor(x)),
@@ -220,48 +220,50 @@ func (g *game) drawStatusBar(screen *ebiten.Image, view mux.View) {
 	if width <= 0 {
 		return
 	}
-	y := float64(padding) + float64(1+view.Rows)*g.cellH
-	vector.FillRect(screen, padding, float32(y), float32(width), float32(g.cellH), themeBarBG, false)
+	y := float64(g.padding) + float64(1+view.Rows)*g.cellH
+	vector.FillRect(screen, float32(g.padding), float32(y), float32(width), float32(g.cellH), g.theme.BarBackground, false)
 
-	left := fmt.Sprintf(" %d/%d  Ctrl+B prefix   ? help", view.ActiveTab+1, len(view.Tabs))
-	if g.prefix {
+	left := fmt.Sprintf(" %d/%d  %s prefix   ? help", view.ActiveTab+1, len(view.Tabs), g.prefix.label)
+	if g.prefixing {
 		left = " PREFIX  %/\\ split V   \"/- split H   c tab   x close   d detach   ? help"
 	}
 	right := ""
 	if view.Broadcast {
 		right = "BROADCAST "
 	}
+	right += g.currentNotice()
 	rightWidth := text.Advance(right, g.face)
 	maxLeft := width - rightWidth
 	left = fitText(left, maxLeft, g.face)
-	drawText(screen, g.face, left, padding, float32(y), g.cellH, themeBarFG)
+	drawText(screen, g.face, left, float32(g.padding), float32(y), g.cellH, g.theme.BarForeground)
 	if right != "" {
-		rightX := float64(padding) + width - rightWidth
-		drawText(screen, g.face, right, float32(rightX), float32(y), g.cellH, themeBorderActive)
+		rightX := float64(g.padding) + width - rightWidth
+		drawText(screen, g.face, right, float32(rightX), float32(y), g.cellH, g.theme.BorderActive)
 	}
 }
 
 func (g *game) drawHelp(screen *ebiten.Image) {
+	lines := g.helpLines()
 	maxWidth := 0.0
-	for _, line := range helpLines {
+	for _, line := range lines {
 		if width := text.Advance(line, g.face); width > maxWidth {
 			maxWidth = width
 		}
 	}
 	boxW := maxWidth + 3*g.cellW
-	boxH := float64(len(helpLines)+2) * g.cellH
+	boxH := float64(len(lines)+2) * g.cellH
 	x := (float64(g.width) - boxW) / 2
 	y := (float64(g.height) - boxH) / 2
-	if x < padding {
-		x = padding
+	if x < float64(g.padding) {
+		x = float64(g.padding)
 	}
-	if y < padding {
-		y = padding
+	if y < float64(g.padding) {
+		y = float64(g.padding)
 	}
-	vector.FillRect(screen, float32(x), float32(y), float32(boxW), float32(boxH), themeOverlayBG, false)
-	drawFrame(screen, x, y, boxW, boxH, 1, themeBorderActive)
-	for i, line := range helpLines {
-		drawText(screen, g.face, line, float32(x+g.cellW), float32(y+g.cellH*float64(i+1)), g.cellH, themeFG)
+	vector.FillRect(screen, float32(x), float32(y), float32(boxW), float32(boxH), g.theme.OverlayBackground, false)
+	drawFrame(screen, x, y, boxW, boxH, 1, g.theme.BorderActive)
+	for i, line := range lines {
+		drawText(screen, g.face, line, float32(x+g.cellW), float32(y+g.cellH*float64(i+1)), g.cellH, g.theme.Foreground)
 	}
 }
 
@@ -273,7 +275,7 @@ func drawFrame(screen *ebiten.Image, x, y, width, height float64, thickness floa
 	vector.FillRect(screen, float32(x+width-thickness), float32(y), th, float32(height), clr, false)
 }
 
-func fitText(value string, maxWidth float64, face *text.GoTextFace) string {
+func fitText(value string, maxWidth float64, face text.Face) string {
 	if maxWidth <= 0 {
 		return ""
 	}

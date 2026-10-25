@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"ggterm/internal/config"
 	"ggterm/internal/daemon"
 	"ggterm/internal/mux"
 	"ggterm/internal/session"
@@ -40,15 +41,44 @@ func run() error {
 	killSession := flag.Bool("kill", false, "terminate the selected session and exit")
 	daemonMode := flag.Bool("daemon", false, "run as a session daemon (internal)")
 	socketFlag := flag.String("socket", "", "daemon endpoint (internal)")
+	configPath := flag.String("config", "", "config file (default: ggterm/config.toml in the config directory)")
+	noConfig := flag.Bool("no-config", false, "ignore the config file and use built-in defaults")
 	flag.Parse()
 
-	if *cols <= 0 || *rows <= 0 {
-		return fmt.Errorf("cols and rows must be positive, got %dx%d", *cols, *rows)
+	setFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+
+	overrides := config.Overrides{}
+	if setFlags["session"] {
+		overrides.Session = sessionName
 	}
-	if *scrollback < 0 {
-		return fmt.Errorf("scrollback must be non-negative, got %d", *scrollback)
+	if setFlags["shell"] {
+		overrides.Shell = shell
 	}
-	if err := daemon.ValidateSessionName(*sessionName); err != nil {
+	if setFlags["cols"] {
+		overrides.Cols = cols
+	}
+	if setFlags["rows"] {
+		overrides.Rows = rows
+	}
+	if setFlags["scrollback"] {
+		overrides.Scrollback = scrollback
+	}
+	if setFlags["restore"] {
+		overrides.Restore = restore
+	}
+	if setFlags["font-size"] {
+		overrides.FontSize = fontSize
+	}
+
+	loader := config.Loader{Path: *configPath, Disable: *noConfig, Overrides: overrides}
+	result, err := loader.Load()
+	if err != nil {
+		return err
+	}
+	settings := result.Settings
+
+	if err := daemon.ValidateSessionName(settings.Session); err != nil {
 		return err
 	}
 
@@ -58,7 +88,7 @@ func run() error {
 
 	socket := *socketFlag
 	if socket == "" {
-		path, err := daemon.SocketPath(*sessionName)
+		path, err := daemon.SocketPath(settings.Session)
 		if err != nil {
 			return err
 		}
@@ -66,7 +96,7 @@ func run() error {
 	}
 	path := *layoutFile
 	if path == "" {
-		defaultPath, err := daemon.LayoutPath(*sessionName)
+		defaultPath, err := daemon.LayoutPath(settings.Session)
 		if err != nil {
 			return err
 		}
@@ -74,23 +104,26 @@ func run() error {
 	}
 
 	if *killSession {
-		return kill(*sessionName, socket, path)
+		return kill(settings.Session, socket, path)
 	}
 
 	cfg := mux.Config{
-		Cols:          *cols,
-		Rows:          *rows,
-		MaxScrollback: *scrollback,
-		Command:       *shell,
+		Cols:          settings.Cols,
+		Rows:          settings.Rows,
+		MaxScrollback: settings.Scrollback,
+		Command:       settings.Shell,
 	}
 
 	if *daemonMode {
-		return runDaemon(*sessionName, socket, path, cfg, *restore)
+		return runDaemon(settings.Session, socket, path, cfg, settings.Restore)
 	}
+
+	watcher := config.NewWatcher(loader, result)
+	uiOpts := ui.Options{Settings: settings, Reload: watcher.Poll}
 	if *noDaemon {
-		return runLocal(cfg, path, *restore, *fontSize)
+		return runLocal(cfg, path, settings.Restore, uiOpts)
 	}
-	return runAttached(*sessionName, socket, path, cfg, *restore, *fontSize)
+	return runAttached(settings.Session, socket, path, cfg, settings.Restore, uiOpts)
 }
 
 func runDaemon(name, socket, layoutPath string, cfg mux.Config, restore bool) error {
@@ -128,7 +161,7 @@ func runDaemon(name, socket, layoutPath string, cfg mux.Config, restore bool) er
 	return err
 }
 
-func runLocal(cfg mux.Config, layoutPath string, restore bool, fontSize float64) error {
+func runLocal(cfg mux.Config, layoutPath string, restore bool, uiOpts ui.Options) error {
 	workspace, err := restoreOrNew(layoutPath, cfg, restore, func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "ggterm: "+format+"\n", args...)
 	})
@@ -136,7 +169,7 @@ func runLocal(cfg mux.Config, layoutPath string, restore bool, fontSize float64)
 		return err
 	}
 
-	runErr := ui.Run(session.NewLocal(workspace), ui.Options{FontSize: fontSize})
+	runErr := ui.Run(session.NewLocal(workspace), uiOpts)
 	if errors.Is(runErr, ui.ErrDetached) {
 		runErr = nil
 	}
@@ -151,13 +184,13 @@ func runLocal(cfg mux.Config, layoutPath string, restore bool, fontSize float64)
 	return errors.Join(runErr, saveErr)
 }
 
-func runAttached(name, socket, layoutPath string, cfg mux.Config, restore bool, fontSize float64) error {
+func runAttached(name, socket, layoutPath string, cfg mux.Config, restore bool, uiOpts ui.Options) error {
 	client, err := attachOrSpawn(name, socket, layoutPath, cfg, restore)
 	if err != nil {
 		return err
 	}
 
-	runErr := ui.Run(client, ui.Options{FontSize: fontSize})
+	runErr := ui.Run(client, uiOpts)
 	_ = client.Close()
 	if errors.Is(runErr, ui.ErrDetached) {
 		return nil

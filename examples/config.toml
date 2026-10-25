@@ -1,0 +1,46 @@
+# GoGoTerminal example configuration.
+# Copy this file to <os.UserConfigDir()>/ggterm/config.toml.
+
+[general]
+session = "default"
+# shell = "pwsh -NoLogo"
+cols = 120
+rows = 36
+scrollback = 20000
+restore = true
+padding = 8
+decorated = true
+
+[font]
+# Available by name: Go Mono. Use path for any other TrueType/OpenType file.
+family = "Go Mono"
+size = 15
+# path = "C:/fonts/JetBrainsMono-Regular.ttf"
+# fallback = ["C:/Windows/Fonts/msyh.ttc"]
+
+[theme]
+# Built-in: ggterm-dark, dracula, nord, gruvbox-dark, solarized-dark,
+# tokyo-night, catppuccin-mocha. Use file for TOML/base16/iTerm2 schemes.
+name = "ggterm-dark"
+# file = "themes/base16-nord.yaml"
+# background = "#0b1020"
+# foreground = "#d8dee9"
+# cursor = "#88c0d0c0"
+# palette = ["#3b4252", "#bf616a", "#a3be8c", "#ebcb8b",
+#            "#81a1c1", "#b48ead", "#88c0d0", "#e5e9f0",
+#            "#4c566a", "#bf616a", "#a3be8c", "#ebcb8b",
+#            "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4"]
+
+[keys]
+prefix = "ctrl+b"
+# replace_defaults = false
+# unbind = ["q"]
+
+# [[keys.bindings]]
+# key = "c"
+# action = "new_tab"
+#
+# [[keys.bindings]]
+# key = "1"
+# action = "select_tab"
+# arg = 1

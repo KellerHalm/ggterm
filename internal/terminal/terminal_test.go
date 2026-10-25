@@ -80,6 +80,29 @@ func Test_Terminal_SGR_colors_and_attributes(t *testing.T) {
 	}
 }
 
+func Test_Terminal_underline_styles_and_colour(t *testing.T) {
+	term := New(Config{Cols: 10, Rows: 5})
+	_, _ = term.Write([]byte("\x1b[4mA\x1b[21mB\x1b[58;5;196mC\x1b[59mD\x1b[24mE"))
+	snap := term.Snapshot(0)
+	line := snap.Lines[0]
+
+	if !line[0].Style.Underline || line[0].Style.DoubleUnderline {
+		t.Errorf("A underline = %+v", line[0].Style)
+	}
+	if !line[1].Style.Underline || !line[1].Style.DoubleUnderline {
+		t.Errorf("B double underline = %+v", line[1].Style)
+	}
+	if line[2].Style.UnderlineColor != IndexedColor(196) {
+		t.Errorf("C underline colour = %+v", line[2].Style.UnderlineColor)
+	}
+	if line[3].Style.UnderlineColor != (Color{}) {
+		t.Errorf("D underline colour = %+v", line[3].Style.UnderlineColor)
+	}
+	if line[4].Style.Underline || line[4].Style.DoubleUnderline {
+		t.Errorf("E underline = %+v", line[4].Style)
+	}
+}
+
 func Test_Terminal_cursor_movement(t *testing.T) {
 	tests := []struct {
 		name    string

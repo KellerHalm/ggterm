@@ -29,6 +29,7 @@ const (
 	actionFocusDown
 	actionToggleBroadcast
 	actionHelp
+	actionFullscreen
 	actionDetach
 	actionQuit
 )
@@ -43,25 +44,27 @@ type keyBinding struct {
 }
 
 var actionNames = map[string]action{
-	"split_vertical":   actionSplitVertical,
-	"split_h":          actionSplitHorizontal,
-	"split_horizontal": actionSplitHorizontal,
-	"close_pane":       actionClosePane,
-	"new_tab":          actionNewTab,
-	"close_tab":        actionCloseTab,
-	"next_tab":         actionNextTab,
-	"prev_tab":         actionPrevTab,
-	"select_tab":       actionSelectTab,
-	"focus_next":       actionFocusNext,
-	"focus_left":       actionFocusLeft,
-	"focus_right":      actionFocusRight,
-	"focus_up":         actionFocusUp,
-	"focus_down":       actionFocusDown,
-	"toggle_broadcast": actionToggleBroadcast,
-	"broadcast":        actionToggleBroadcast,
-	"help":             actionHelp,
-	"detach":           actionDetach,
-	"quit":             actionQuit,
+	"split_vertical":    actionSplitVertical,
+	"split_h":           actionSplitHorizontal,
+	"split_horizontal":  actionSplitHorizontal,
+	"close_pane":        actionClosePane,
+	"new_tab":           actionNewTab,
+	"close_tab":         actionCloseTab,
+	"next_tab":          actionNextTab,
+	"prev_tab":          actionPrevTab,
+	"select_tab":        actionSelectTab,
+	"focus_next":        actionFocusNext,
+	"focus_left":        actionFocusLeft,
+	"focus_right":       actionFocusRight,
+	"focus_up":          actionFocusUp,
+	"focus_down":        actionFocusDown,
+	"toggle_broadcast":  actionToggleBroadcast,
+	"broadcast":         actionToggleBroadcast,
+	"help":              actionHelp,
+	"fullscreen":        actionFullscreen,
+	"toggle_fullscreen": actionFullscreen,
+	"detach":            actionDetach,
+	"quit":              actionQuit,
 }
 
 var actionDescriptions = map[action]string{
@@ -80,6 +83,7 @@ var actionDescriptions = map[action]string{
 	actionFocusDown:       "focus pane down",
 	actionToggleBroadcast: "toggle input broadcast",
 	actionHelp:            "toggle this help",
+	actionFullscreen:      "toggle fullscreen",
 	actionDetach:          "detach (session keeps running)",
 	actionQuit:            "quit and terminate the session",
 }
@@ -106,6 +110,7 @@ var defaultBindingSpecs = []config.Binding{
 	{Key: "right", Action: "focus_right"},
 	{Key: "b", Action: "toggle_broadcast"},
 	{Key: "?", Action: "help"},
+	{Key: "f", Action: "fullscreen"},
 	{Key: "d", Action: "detach"},
 	{Key: "q", Action: "quit"},
 	{Key: "1", Action: "select_tab", Arg: 1},

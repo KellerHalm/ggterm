@@ -109,6 +109,75 @@ desc = "go to third tab"
 	}
 }
 
+func TestLoadTOMLFontVariantsAndWindow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	writeFile(t, path, `
+[font]
+family = "JetBrains Mono"
+bold = "fonts/Bold.ttf"
+italic = "fonts/Italic.ttf"
+bold_italic = "fonts/BoldItalic.ttf"
+ligatures = false
+
+[window]
+transparent = true
+`)
+	result, err := Loader{Path: path}.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	font := result.Settings.Font
+	if font.Bold != filepath.Join(dir, "fonts", "Bold.ttf") {
+		t.Errorf("bold = %q", font.Bold)
+	}
+	if font.Italic != filepath.Join(dir, "fonts", "Italic.ttf") {
+		t.Errorf("italic = %q", font.Italic)
+	}
+	if font.BoldItalic != filepath.Join(dir, "fonts", "BoldItalic.ttf") {
+		t.Errorf("bold italic = %q", font.BoldItalic)
+	}
+	if font.Ligatures {
+		t.Error("ligatures should be disabled")
+	}
+	if !result.Settings.Window.Transparent {
+		t.Error("window transparency was not applied")
+	}
+}
+
+func TestLoadLuaFontVariants(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "init.lua")
+	writeFile(t, path, `
+ggterm.set_option("font.family", "Fira Code")
+ggterm.set_option("font.bold", "bold.ttf")
+ggterm.set_option("font.italic", "italic.ttf")
+ggterm.set_option("font.bold_italic", "bolditalic.ttf")
+ggterm.set_option("font.ligatures", false)
+ggterm.set_option("window.transparent", true)
+`)
+	result, err := Loader{Path: path}.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	font := result.Settings.Font
+	if font.Family != "Fira Code" {
+		t.Errorf("family = %q", font.Family)
+	}
+	if font.Bold != filepath.Join(dir, "bold.ttf") || font.Italic != filepath.Join(dir, "italic.ttf") {
+		t.Errorf("variants = %+v", font)
+	}
+	if font.BoldItalic != filepath.Join(dir, "bolditalic.ttf") {
+		t.Errorf("bold italic = %q", font.BoldItalic)
+	}
+	if font.Ligatures {
+		t.Error("ligatures should be disabled")
+	}
+	if !result.Settings.Window.Transparent {
+		t.Error("window transparency was not applied")
+	}
+}
+
 func TestLoadTOMLUnknownOption(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

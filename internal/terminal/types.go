@@ -23,8 +23,14 @@ func RGBColor(r, g, b uint8) Color {
 }
 
 type Style struct {
-	FG, BG                                                        Color
-	Bold, Faint, Italic, Underline, Blink, Reverse, Strikethrough bool
+	FG, BG          Color
+	UnderlineColor  Color
+	Bold, Faint     bool
+	Italic          bool
+	Underline       bool
+	DoubleUnderline bool
+	Blink, Reverse  bool
+	Strikethrough   bool
 }
 
 type Cell struct {

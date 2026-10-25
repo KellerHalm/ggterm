@@ -23,12 +23,26 @@ const (
 	DefaultLuaName    = "init.lua"
 )
 
-// Font controls the terminal face.
+// Font controls the terminal face. Paths for Bold, Italic and BoldItalic are
+// optional: when empty, ggterm looks for matching faces next to Path or in the
+// system font directories.
 type Font struct {
-	Family   string
-	Path     string
-	Size     float64
-	Fallback []string
+	Family     string
+	Path       string
+	Bold       string
+	Italic     string
+	BoldItalic string
+	Size       float64
+	Fallback   []string
+	Ligatures  bool
+}
+
+// Window controls window-level options that are applied before the graphics
+// loop starts.
+type Window struct {
+	// Transparent enables a translucent window. Combine it with a theme
+	// background alpha (for example "#0f1117d0") to control the opacity.
+	Transparent bool
 }
 
 // Binding maps a key chord (parsed after the prefix) to an action.
@@ -60,9 +74,10 @@ type Settings struct {
 	Padding    int
 	Decorated  bool
 
-	Font  Font
-	Theme Theme
-	Keys  Keys
+	Font   Font
+	Window Window
+	Theme  Theme
+	Keys   Keys
 }
 
 // Default returns a fresh copy of the built-in configuration.
@@ -76,8 +91,9 @@ func Default() Settings {
 		Padding:    8,
 		Decorated:  true,
 		Font: Font{
-			Family: "Go Mono",
-			Size:   15,
+			Family:    "Go Mono",
+			Size:      15,
+			Ligatures: true,
 		},
 		Theme: defaultTheme,
 		Keys: Keys{
@@ -132,10 +148,18 @@ type generalTable struct {
 }
 
 type fontTable struct {
-	Family   *string  `toml:"family"`
-	Path     *string  `toml:"path"`
-	Size     *float64 `toml:"size"`
-	Fallback []string `toml:"fallback"`
+	Family     *string  `toml:"family"`
+	Path       *string  `toml:"path"`
+	Bold       *string  `toml:"bold"`
+	Italic     *string  `toml:"italic"`
+	BoldItalic *string  `toml:"bold_italic"`
+	Size       *float64 `toml:"size"`
+	Fallback   []string `toml:"fallback"`
+	Ligatures  *bool    `toml:"ligatures"`
+}
+
+type windowTable struct {
+	Transparent *bool `toml:"transparent"`
 }
 
 type themeTable struct {
@@ -161,6 +185,7 @@ type keysTable struct {
 type fileConfig struct {
 	General generalTable `toml:"general"`
 	Font    fontTable    `toml:"font"`
+	Window  windowTable  `toml:"window"`
 	Theme   themeTable   `toml:"theme"`
 	Keys    keysTable    `toml:"keys"`
 }
@@ -372,11 +397,27 @@ func applyTOMLFile(settings *Settings, path, dir string, files *[]string) error 
 	if file.Font.Path != nil {
 		settings.Font.Path = resolvePath(dir, *file.Font.Path)
 	}
+	if file.Font.Bold != nil {
+		settings.Font.Bold = resolvePath(dir, *file.Font.Bold)
+	}
+	if file.Font.Italic != nil {
+		settings.Font.Italic = resolvePath(dir, *file.Font.Italic)
+	}
+	if file.Font.BoldItalic != nil {
+		settings.Font.BoldItalic = resolvePath(dir, *file.Font.BoldItalic)
+	}
 	if file.Font.Size != nil {
 		settings.Font.Size = *file.Font.Size
 	}
 	if file.Font.Fallback != nil {
 		settings.Font.Fallback = resolvePaths(dir, file.Font.Fallback)
+	}
+	if file.Font.Ligatures != nil {
+		settings.Font.Ligatures = *file.Font.Ligatures
+	}
+
+	if file.Window.Transparent != nil {
+		settings.Window.Transparent = *file.Window.Transparent
 	}
 
 	if file.Theme.Name != "" && file.Theme.File != "" {

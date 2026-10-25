@@ -62,6 +62,7 @@ type PaneView interface {
 	Title() string
 	Alive() bool
 	Revision() uint64
+	ScrollOffset() int
 	Resize(cols, rows int) error
 }
 

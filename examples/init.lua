@@ -2,6 +2,10 @@
 -- Copy to <os.UserConfigDir()>/ggterm/init.lua; it is loaded after config.toml.
 
 ggterm.set_option("font.size", 16)
+ggterm.set_option("font.ligatures", true)
+-- ggterm.set_option("font.bold", "fonts/Bold.ttf")
+-- ggterm.set_option("font.fallback", { "C:/Windows/Fonts/msyh.ttc" })
+-- ggterm.set_option("window.transparent", true)
 ggterm.set_option("padding", 6)
 ggterm.set_prefix("ctrl+b")
 

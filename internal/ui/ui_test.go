@@ -1,13 +1,18 @@
 package ui
 
 import (
+	"image/color"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"golang.org/x/image/font/gofont/gomono"
 
 	"ggterm/internal/config"
+	"ggterm/internal/mux"
 	"ggterm/internal/terminal"
 )
 
@@ -294,11 +299,201 @@ func Test_helpLines(t *testing.T) {
 	}
 }
 
-func Test_fitText(t *testing.T) {
-	face, _, err := loadFace(config.Default().Font)
+func Test_classifyFontFilename(t *testing.T) {
+	tests := []struct {
+		name   string
+		family string
+		style  fontStyle
+	}{
+		{"JetBrainsMono-Regular.ttf", "jetbrainsmono", fontRegular},
+		{"JetBrainsMono-Bold.ttf", "jetbrainsmono", fontBold},
+		{"JetBrainsMono-Italic.ttf", "jetbrainsmono", fontItalic},
+		{"JetBrainsMono-BoldItalic.ttf", "jetbrainsmono", fontBoldItalic},
+		{"SourceCodePro-Oblique.otf", "sourcecodepro", fontItalic},
+		{"RobotoMono-SemiBold.ttf", "robotomono", fontBold},
+		{"JetBrainsMonoBold.ttf", "jetbrainsmono", fontBold},
+		{"Bookman Old Style-Bold.ttf", "bookmanoldstyle", fontBold},
+		{"Arial Narrow.ttf", "arialnarrow", fontRegular},
+		{"RobotoCondensed-Bold.ttf", "robotocondensed", fontBold},
+		{"RobotoMono-Light.ttf", "robotomonolight", fontRegular},
+		{"Times New Roman.ttf", "timesnewroman", fontRegular},
+		{"Blackletter.ttf", "blackletter", fontRegular},
+		{"Segoe UI.ttf", "segoeui", fontRegular},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			family, style := classifyFontFilename(test.name)
+			if family != test.family || style != test.style {
+				t.Errorf("got %q %v, want %q %v", family, style, test.family, test.style)
+			}
+		})
+	}
+}
+
+func Test_fontIndexPrefersRegularBold(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{
+		"RankMono-ExtraBold.ttf", "RankMono-SemiBold.ttf",
+		"RankMono-Bold.ttf", "RankMono-Light.ttf", "RankMono-Regular.ttf",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index := fontIndexFor([]string{dir})
+	path, exact := index.lookup("Rank Mono", fontBold)
+	if !exact || filepath.Base(path) != "RankMono-Bold.ttf" {
+		t.Errorf("bold = %q exact=%v", path, exact)
+	}
+	path, exact = index.lookup("Rank Mono", fontRegular)
+	if !exact || filepath.Base(path) != "RankMono-Regular.ttf" {
+		t.Errorf("regular = %q exact=%v", path, exact)
+	}
+}
+
+func Test_fontSetBuiltinSynthesizesStyles(t *testing.T) {
+	font := config.Default().Font
+	set, err := loadFontSet(font)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !set.ligatures {
+		t.Error("ligatures should be enabled by default")
+	}
+	if !set.variants[fontBold].syntheticBold {
+		t.Error("builtin bold should be synthesised")
+	}
+	if !set.variants[fontItalic].syntheticItalic {
+		t.Error("builtin italic should be synthesised")
+	}
+	if !set.variants[fontBoldItalic].syntheticBold || !set.variants[fontBoldItalic].syntheticItalic {
+		t.Error("builtin bold italic should synthesise both styles")
+	}
+	selected := set.selectFace(terminal.Style{Italic: true})
+	if selected.face != set.variants[fontItalic].face {
+		t.Error("style selection did not choose the italic face")
+	}
+}
+
+func Test_fontSetDiscoversSiblingVariants(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"TestMono-Regular.ttf", "TestMono-Bold.ttf", "TestMono-Italic.ttf", "TestMono-BoldItalic.ttf"} {
+		if err := os.WriteFile(filepath.Join(dir, name), gomono.TTF, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	font := config.Default().Font
+	font.Path = filepath.Join(dir, "TestMono-Regular.ttf")
+	font.Size = 16
+	set, err := loadFontSet(font)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.variants[fontBold].syntheticBold {
+		t.Error("bold sibling was not detected")
+	}
+	if set.variants[fontItalic].syntheticItalic {
+		t.Error("italic sibling was not detected")
+	}
+	if set.variants[fontBoldItalic].syntheticBold || set.variants[fontBoldItalic].syntheticItalic {
+		t.Error("bold italic sibling was not detected")
+	}
+}
+
+func Test_fontSetFindsSystemFamily(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"SysMono-Regular.ttf", "SysMono-Bold.ttf", "SysMono-Italic.ttf"} {
+		if err := os.WriteFile(filepath.Join(dir, name), gomono.TTF, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GGTERM_FONT_DIRS", dir)
+
+	font := config.Default().Font
+	font.Family = "Sys Mono"
+	font.Size = 16
+	set, err := loadFontSet(font)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.variants[fontBold].syntheticBold {
+		t.Error("system bold face was not found")
+	}
+	if set.variants[fontItalic].syntheticItalic {
+		t.Error("system italic face was not found")
+	}
+	if !set.variants[fontBoldItalic].syntheticItalic {
+		t.Error("bold italic should fall back to bold with synthetic italic")
+	}
+}
+
+func Test_rectBatch(t *testing.T) {
+	var batch rectBatch
+	batch.add(1, 2, 3, 4, color.RGBA{R: 0x10, G: 0x20, B: 0x30, A: 0xff})
+	batch.add(5, 6, 7, 8, color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
+	if len(batch.vertices) != 8 || len(batch.indices) != 12 {
+		t.Fatalf("batch = %d vertices, %d indices", len(batch.vertices), len(batch.indices))
+	}
+	if batch.vertices[0].DstX != 1 || batch.vertices[0].DstY != 2 || batch.vertices[0].ColorR != 0x10/255.0 {
+		t.Errorf("first vertex = %+v", batch.vertices[0])
+	}
+	if batch.indices[0] != 0 || batch.indices[6] != 4 || batch.indices[11] != 6 {
+		t.Errorf("indices = %v", batch.indices)
+	}
+	batch.reset()
+	if len(batch.vertices) != 0 || len(batch.indices) != 0 {
+		t.Error("reset did not clear the batch")
+	}
+}
+
+func Test_cursorWidth(t *testing.T) {
+	content := mux.Rect{W: 4, H: 2}
+	snap := terminal.Snapshot{
+		Cursor: terminal.Cursor{Row: 0, Col: 1, Visible: true},
+		Lines: [][]terminal.Cell{
+			{{Rune: 'a', Width: 1}, {Rune: '漢', Width: 2}, {Rune: 0, Width: 0}},
+			{{Rune: 'b', Width: 1}},
+		},
+	}
+	if got := cursorWidth(snap, content); got != 2 {
+		t.Errorf("wide cursor width = %d, want 2", got)
+	}
+	snap.Cursor.Col = 0
+	if got := cursorWidth(snap, content); got != 1 {
+		t.Errorf("narrow cursor width = %d, want 1", got)
+	}
+	snap.Cursor.Col = 1
+	if got := cursorWidth(snap, mux.Rect{W: 2, H: 2}); got != 1 {
+		t.Errorf("cursor on wide glyph at edge = %d, want 1", got)
+	}
+}
+
+func Test_snapshotBlinking(t *testing.T) {
+	content := mux.Rect{W: 2, H: 2}
+	calm := terminal.Snapshot{Lines: [][]terminal.Cell{
+		{{Rune: 'a', Width: 1}, {Rune: 'b', Width: 1}},
+	}}
+	if snapshotBlinking(calm, content) {
+		t.Error("plain snapshot reported blinking")
+	}
+	blinking := terminal.Snapshot{Lines: [][]terminal.Cell{
+		{{Rune: 'a', Width: 1}, {Rune: 'b', Width: 1, Style: terminal.Style{Blink: true}}},
+		{{Rune: 'c', Width: 1}},
+	}}
+	if !snapshotBlinking(blinking, content) {
+		t.Error("blinking cell was not detected")
+	}
+	if snapshotBlinking(blinking, mux.Rect{W: 1, H: 2}) {
+		t.Error("blinking cell outside the content width was detected")
+	}
+}
+
+func Test_fitText(t *testing.T) {
+	fonts, err := loadFontSet(config.Default().Font)
+	if err != nil {
+		t.Fatal(err)
+	}
+	face := fonts.variants[fontRegular].face
 	width := text.Advance("hello world", face)
 	if got := fitText("hello world", width+1, face); got != "hello world" {
 		t.Errorf("fitted = %q, want original", got)

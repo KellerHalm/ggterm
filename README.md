@@ -2,7 +2,7 @@
 
 Кроссплатформенный терминал на Go: эмулятор терминала и основа для мультиплексора, файлового менеджера и мультимедиа из `GGTerm_TZ.md`.
 
-Текущий статус — **Этап 3: кастомизация**. Несколько панелей с произвольной вложенностью, вкладки, detach/attach через фоновый демон, а также конфигурация TOML/Lua, темы, шрифты и hot reload.
+Текущий статус — **Этап 4: GPU-рендеринг и полировка**. Несколько панелей с произвольной вложенностью, вкладки, detach/attach через фоновый демон, конфигурация TOML/Lua, темы и hot reload, а также оптимизированный GPU-рендеринг, системные шрифты, настоящие bold/italic и лигатуры.
 
 ## Что уже работает
 
@@ -11,7 +11,7 @@
 - PTY-слой: ConPTY на Windows, `creack/pty` на Linux/macOS.
 - Потоковый парсер ANSI/VT: C0, ESC, CSI, OSC, DCS/APC/PM/SOS.
 - Цвета: 16 базовых, 256-цветная палитра, true color (24-bit).
-- Атрибуты: bold, faint, italic, underline, blink, reverse, strikethrough.
+- Атрибуты: bold, faint, italic, underline (одинарное, двойное и цветное), blink, reverse, strikethrough.
 - Курсор: позиционирование, видимость, сохранение/восстановление, pending-wrap.
 - Регион прокрутки, origin mode, вставка/удаление строк и символов.
 - Альтернативный экран (`?47`, `?1047`, `?1049`) для full-screen приложений.
@@ -48,9 +48,21 @@
 - Опциональный Lua-конфиг (`init.lua`) для вычисляемых настроек, тем и биндингов.
 - Встроенные темы (`ggterm-dark`, `dracula`, `nord`, `gruvbox-dark`, `solarized-dark`, `tokyo-night`, `catppuccin-mocha`) и собственные TOML-темы.
 - Импорт схем base16 (JSON/YAML) и iTerm2 (`.itermcolors`).
-- Шрифт: встроенный Go Mono, внешний `.ttf`/`.otf` через `font.path`, fallback-шрифты.
+- Шрифт: встроенный Go Mono, внешний `.ttf`/`.otf` через `font.path` или поиск по названию семейства в системных каталогах (Windows, Linux, macOS).
+- Настоящие начертания bold/italic/bold-italic: явные пути, автоматический поиск соседних файлов и системных вариантов; при отсутствии — синтетический bold и наклон.
+- Лигатуры включаются автоматически для шрифтов, которые их содержат; `font.ligatures = false` отключает их.
 - Полностью настраиваемые prefix и keybindings, включая отмену и замену стандартных.
 - Hot reload: изменения темы, шрифта, keybindings и оформления подхватываются без перезапуска.
+
+### GPU-рендеринг и производительность
+
+- Рендеринг идёт через GPU-конвейер Ebitengine (Direct3D/Metal/OpenGL); true color поддерживается на всех уровнях.
+- Панели кэшируются в offscreen-изображения по revision и scroll offset: неподвижная панель стоит одного `DrawImage` за кадр.
+- Фоны ячеек, вкладок и статус-бара собираются в один батч и отправляются одним `DrawTriangles32` вместо тысяч отдельных вызовов.
+- Снимок буфера терминала не копируется каждый кадр: он запрашивается только при изменении содержимого или прокрутке.
+- Поддержаны цвет и стиль подчёркивания (SGR `4`, `21`, `58`, `59`), включая 256-цветный и true-color вариант.
+- Прозрачность окна: `[window] transparent = true` вместе с alpha-каналом фона темы (например `background = "#0f1117d0"`).
+- Полноэкранный режим — prefix + `f`.
 
 ## Требования
 
@@ -118,10 +130,17 @@ font_size = 16            # краткая форма font.size
 font_family = "Go Mono"   # краткая форма font.family
 
 [font]
-family = "Go Mono"        # встроенный шрифт; также можно указать путь к файлу
+family = "Go Mono"        # встроенный шрифт или семейство из системных каталогов
 # path = "C:/fonts/JetBrainsMono-Regular.ttf"
-# fallback = ["C:/Windows/Fonts/msyh.ttc"]
+# bold = "C:/fonts/JetBrainsMono-Bold.ttf"
+# italic = "C:/fonts/JetBrainsMono-Italic.ttf"
+# bold_italic = "C:/fonts/JetBrainsMono-BoldItalic.ttf"
+# fallback = ["Microsoft YaHei"]     # путь к файлу или имя семейства
 size = 16
+ligatures = true          # false — рисовать по ячейкам без лигатур
+
+[window]
+transparent = false       # true + alpha в фоне темы даёт полупрозрачное окно
 
 [theme]
 name = "tokyo-night"      # встроенная тема; name и file взаимоисключающие
@@ -147,7 +166,9 @@ action = "select_tab"
 arg = 1                   # номера вкладок 1..9
 ```
 
-Доступные действия: `split_vertical`, `split_horizontal`, `close_pane`, `new_tab`, `close_tab`, `next_tab`, `prev_tab`, `select_tab`, `focus_next`, `focus_left`, `focus_right`, `focus_up`, `focus_down`, `toggle_broadcast`, `help`, `detach`, `quit`. Действие `none` удаляет биндинг. Клавиши записываются как `c`, `ctrl+a`, `shift+slash`, `alt+enter`, `f5`, `up`, `%`, `?`; для команд мультиплексора префикс добавлять не нужно — биндинг всегда срабатывает после prefix.
+Доступные действия: `split_vertical`, `split_horizontal`, `close_pane`, `new_tab`, `close_tab`, `next_tab`, `prev_tab`, `select_tab`, `focus_next`, `focus_left`, `focus_right`, `focus_up`, `focus_down`, `toggle_broadcast`, `help`, `fullscreen`, `detach`, `quit`. Действие `none` удаляет биндинг. Клавиши записываются как `c`, `ctrl+a`, `shift+slash`, `alt+enter`, `f5`, `up`, `%`, `?`; для команд мультиплексора префикс добавлять не нужно — биндинг всегда срабатывает после prefix.
+
+Если задано только `font.family`, ggterm ищет файл по названию семейства в системных каталогах шрифтов (`%WINDIR%\Fonts` и пользовательские Fonts на Windows, `/usr/share/fonts` и `~/.local/share/fonts` на Linux, `/System/Library/Fonts` и `~/Library/Fonts` на macOS). Дополнительные каталоги можно перечислить в `GGTERM_FONT_DIRS` через разделитель путей ОС. Bold/italic-файлы подхватываются автоматически, если лежат рядом с основным или в системном каталоге; иначе включается синтетическое начертание.
 
 Темы можно вынести в отдельный файл (`theme.file`): TOML с полями `background`, `foreground`, `cursor`, `bar_background`, `bar_foreground`, `tab_active_background`, `tab_active_foreground`, `border`, `border_active`, `overlay_background`, `palette` (16 цветов). Также поддерживаются base16-схемы в JSON/YAML (`base00`..`base0F`) и iTerm2 `.itermcolors`.
 
@@ -155,6 +176,8 @@ Lua-конфиг загружается после TOML и может перео
 
 ```lua
 ggterm.set_option("font.size", 16)
+ggterm.set_option("font.ligatures", true)
+ggterm.set_option("window.transparent", false)
 ggterm.set_option("padding", 6)
 ggterm.set_prefix("ctrl+a")
 ggterm.bind("c", "new_tab")
@@ -165,9 +188,9 @@ ggterm.theme_file("themes/my-theme.toml")
 ggterm.set_theme({ cursor = "#ffcc66" })  -- цвета можно задать и точечно
 ```
 
-Доступные опции `set_option`: `session`, `shell`, `cols`, `rows`, `scrollback`, `restore`, `padding`, `decorated`, `font.family`, `font.path`, `font.size`, `font.fallback`, `theme`, `keys.prefix`.
+Доступные опции `set_option`: `session`, `shell`, `cols`, `rows`, `scrollback`, `restore`, `padding`, `decorated`, `font.family`, `font.path`, `font.bold`, `font.italic`, `font.bold_italic`, `font.size`, `font.fallback`, `font.ligatures`, `window.transparent`, `theme`, `keys.prefix`.
 
-Hot reload опрашивает конфиг, Lua и файл темы каждые 0.5 с. Без перезапуска применяются тема, шрифт, keybindings, отступы и decorations; сообщение об успехе или ошибке показывается в статус-баре. `session`, `shell`, `cols`, `rows` и `scrollback` применяются только при следующем запуске или создании панели.
+Hot reload опрашивает конфиг, Lua и файл темы каждые 0.5 с. Без перезапуска применяются тема, шрифт, keybindings, отступы и decorations; сообщение об успехе или ошибке показывается в статус-баре. `session`, `shell`, `cols`, `rows`, `scrollback` и прозрачность окна применяются только при следующем запуске; `window.transparent` требует перезапуска, потому что режим окна задаётся до старта графического цикла.
 
 Примеры лежат в `examples/config.toml` и `examples/init.lua`.
 
@@ -203,6 +226,7 @@ Hot reload опрашивает конфиг, Lua и файл темы кажд�
 | Закрыть панель | `x` |
 | Закрыть вкладку | `&` |
 | Broadcast-ввод | `b` |
+| Полноэкранный режим | `f` |
 | Справка | `?` |
 | Detach (сессия продолжает работать) | `d` |
 | Завершить сессию и демон | `q` |
@@ -219,7 +243,7 @@ internal/mux          панели, дерево сплитов, вкладки,
 internal/config       TOML/Lua-конфигурация, темы, шрифты, hot reload
 internal/session      интерфейс, который UI использует для управления мультиплексором
 internal/daemon       фоновый демон, IPC-протокол, удалённый клиент, запуск процесса
-internal/ui           окно Ebitengine, ввод, keybindings, отрисовка панелей и вкладок
+internal/ui           окно Ebitengine, GPU-батчинг и кэш панелей, шрифты, ввод, keybindings
 ```
 
 Поток данных в режиме демона:
@@ -247,12 +271,12 @@ CI (`.github/workflows/ci.yml`) собирает и тестирует прое�
 
 - К сессии одновременно подключён один клиент: новое подключение вытесняет предыдущее (в стиле `tmux attach`), совместный просмотр пока не поддерживается.
 - Scrollback живёт только в памяти демона: после его завершения история теряется, восстанавливается лишь раскладка.
-- Hot reload применяет только визуальные настройки и keybindings; `session`, `shell`, размеры и scrollback требуют перезапуска.
-- По имени доступен только встроенный Go Mono; другие шрифты подключаются через `font.path`/`font.fallback`. Системный поиск шрифтов, лигатуры и настоящие bold/italic — Этап 4.
+- Hot reload применяет только визуальные настройки и keybindings; `session`, `shell`, размеры, scrollback и прозрачность окна требуют перезапуска.
 - Нет файлового менеджера, графического протокола, Kitty Graphics и видео — Этапы 5–7.
-- Нет лигатур, настоящего жирного начертания и курсива: Go Mono не содержит этих начертаний, bold имитируется сдвигом.
-- Fallback-шрифт для CJK нужно указать вручную через `font.fallback`; без него широкие символы занимают две ячейки, но могут отображаться как отсутствующий глиф.
-- Нет буфера обмена, повтора клавиш и настройки прозрачности окна.
+- Поиск системных шрифтов опирается на имена файлов; шрифты с нестандартными именами подключаются через `font.path`. Из коллекций `.ttc`/`.otc` используется первая гарнитура. Шрифты, установленные после запуска, находятся после перезапуска (индекс каталогов кэшируется).
+- Для CJK по-прежнему нужен `font.fallback` (путь или имя семейства, если оно совпадает с именем файла); без fallback широкие символы занимают две ячейки, но могут отображаться как отсутствующий глиф.
+- Размытие фона не поддерживается: доступны только прозрачность через alpha-канал фона и decorations окна.
+- Нет буфера обмена и повтора клавиш.
 - Combining marks (диакритика) в модели ячейки не накапливаются.
 - Unix-часть собирается и покрыта тестами, но разрабатывается на Windows — проверка в CI.
 
@@ -262,7 +286,7 @@ CI (`.github/workflows/ci.yml`) собирает и тестирует прое�
 - [x] Этап 2. Мультиплексор: панели, вкладки, layout, сохранение раскладки
 - [x] Этап 2b. Detach/attach и фоновый демон сессий
 - [x] Этап 3. Кастомизация: TOML, темы, шрифты, Lua, hot reload
-- [ ] Этап 4. GPU-полировка: лигатуры, оптимизация, прозрачность
+- [x] Этап 4. GPU-полировка: лигатуры, оптимизация, прозрачность
 - [ ] Этап 5. Графика: свой протокол и Kitty Graphics
 - [ ] Этап 6. Файловый менеджер в стиле yazi
 - [ ] Этап 7. Видео через ffmpeg/libav

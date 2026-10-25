@@ -27,9 +27,15 @@ func (g *game) Draw(screen *ebiten.Image) {
 		topRows = 1
 	}
 	contentY := float64(g.padding) + float64(topRows)*g.cellH
+	if g.seenPanes == nil {
+		g.seenPanes = make(map[int]bool, len(view.Panes))
+	}
+	clear(g.seenPanes)
 	for _, layout := range view.Panes {
+		g.seenPanes[layout.Pane.ID()] = true
 		g.drawPane(screen, layout, contentY)
 	}
+	g.prunePaneCache(g.seenPanes)
 	if g.showBars {
 		g.drawStatusBar(screen, view)
 	}
@@ -48,12 +54,12 @@ func (g *game) drawPane(screen *ebiten.Image, layout mux.PaneLayout, contentY fl
 	contentX, contentYPos := x0, y0
 	if bordered {
 		borderColor := g.theme.Border
-		thickness := float32(1)
+		thickness := float64(1)
 		if layout.Active {
 			borderColor = g.theme.BorderActive
 			thickness = 2
 		}
-		drawFrame(screen, x0, y0, width, height, float64(thickness), borderColor)
+		drawFrame(screen, x0, y0, width, height, thickness, borderColor)
 		contentX = x0 + g.cellW
 		contentYPos = y0 + g.cellH
 	}
@@ -66,22 +72,79 @@ func (g *game) drawPane(screen *ebiten.Image, layout mux.PaneLayout, contentY fl
 		y1:   int(math.Ceil(y0 + height)),
 	})
 
-	snap := layout.Pane.Snapshot()
-	for row := 0; row < layout.Content.H && row < len(snap.Lines); row++ {
-		g.drawLine(screen, contentX, contentYPos, row, snap.Lines[row], layout.Content.W)
+	entry := g.cachedPane(layout)
+	if entry == nil || entry.image == nil {
+		return
 	}
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(contentX, contentYPos)
+	screen.DrawImage(entry.image, op)
+
 	if layout.Active && !g.showHelp {
-		g.drawCursor(screen, snap, contentX, contentYPos, layout.Content)
+		g.drawCursor(screen, entry, contentX, contentYPos, layout.Content)
 	}
 }
 
-func (g *game) drawLine(screen *ebiten.Image, baseX, baseY float64, row int, line []terminal.Cell, limit int) {
+// drawSnapshot renders terminal cells into a pane-sized offscreen image. The
+// image is cached by revision so idle panes cost a single DrawImage per frame.
+func (g *game) drawSnapshot(dst *ebiten.Image, snap terminal.Snapshot, content mux.Rect) {
+	limit := content.W
+	rows := content.H
+	if rows > len(snap.Lines) {
+		rows = len(snap.Lines)
+	}
+
+	g.rects.reset()
+	for row := 0; row < rows; row++ {
+		g.collectLineBackground(0, 0, row, snap.Lines[row], limit)
+	}
+	g.rects.flush(dst)
+
+	for row := 0; row < rows; row++ {
+		g.drawLine(dst, 0, 0, row, snap.Lines[row], limit)
+	}
+}
+
+func (g *game) collectLineBackground(baseX, baseY float64, row int, line []terminal.Cell, limit int) {
+	if limit > len(line) {
+		limit = len(line)
+	}
+	rowY := baseY + float64(row)*g.cellH
+	for col := 0; col < limit; {
+		cell := line[col]
+		width := int(cell.Width)
+		if width <= 0 {
+			col++
+			continue
+		}
+		if width > 2 {
+			width = 1
+		}
+		if width > limit-col {
+			width = limit - col
+		}
+		_, bg := themeColors(g.theme, cell.Style)
+		if bg != g.theme.Background {
+			g.rects.add(
+				baseX+float64(col)*g.cellW,
+				rowY,
+				float64(width)*g.cellW,
+				g.cellH,
+				bg,
+			)
+		}
+		col += width
+	}
+}
+
+func (g *game) drawLine(dst *ebiten.Image, baseX, baseY float64, row int, line []terminal.Cell, limit int) {
 	if limit > len(line) {
 		limit = len(line)
 	}
 	start := -1
 	var style terminal.Style
 	var run strings.Builder
+	visible := false
 
 	flush := func(end int) {
 		if start < 0 {
@@ -91,10 +154,11 @@ func (g *game) drawLine(screen *ebiten.Image, baseX, baseY float64, row int, lin
 			end = limit
 		}
 		if end > start {
-			g.drawCells(screen, baseX, baseY, row, start, end, run.String(), style)
+			g.drawCells(dst, baseX, baseY, row, start, end, run.String(), style, visible)
 		}
 		start = -1
 		run.Reset()
+		visible = false
 	}
 
 	for col := 0; col < limit; {
@@ -109,12 +173,14 @@ func (g *game) drawLine(screen *ebiten.Image, baseX, baseY float64, row int, lin
 		}
 		if width == 2 && col+1 < limit {
 			flush(col)
-			g.drawCells(screen, baseX, baseY, row, col, col+2, string(cell.Rune), cell.Style)
+			g.drawCells(dst, baseX, baseY, row, col, col+2, string(cell.Rune), cell.Style, cell.Rune != 0 && cell.Rune != ' ')
 			col += 2
 			continue
 		}
 		if start < 0 {
 			start, style = col, cell.Style
+			run.Reset()
+			visible = false
 		} else if cell.Style != style {
 			flush(col)
 			start, style = col, cell.Style
@@ -123,15 +189,19 @@ func (g *game) drawLine(screen *ebiten.Image, baseX, baseY float64, row int, lin
 			run.WriteRune(' ')
 		} else {
 			run.WriteRune(cell.Rune)
+			if cell.Rune != ' ' {
+				visible = true
+			}
 		}
 		col++
 	}
 	flush(limit)
 }
 
-func (g *game) drawCells(screen *ebiten.Image, baseX, baseY float64, row, startCol, endCol int, value string, style terminal.Style) {
+func (g *game) drawCells(dst *ebiten.Image, baseX, baseY float64, row, startCol, endCol int, value string, style terminal.Style, visible bool) {
 	fg, bg := themeColors(g.theme, style)
-	if style.Blink && !blinkVisible() {
+	blinkHidden := style.Blink && !blinkVisible()
+	if blinkHidden {
 		fg = bg
 	}
 	x := baseX + float64(startCol)*g.cellW
@@ -139,20 +209,50 @@ func (g *game) drawCells(screen *ebiten.Image, baseX, baseY float64, row, startC
 	width := float32(float64(endCol-startCol) * g.cellW)
 	height := float32(g.cellH)
 
-	if bg != g.theme.Background {
-		vector.FillRect(screen, float32(x), float32(y), width, height, bg, false)
-	}
-	if strings.TrimSpace(value) != "" {
-		drawText(screen, g.face, value, float32(x), float32(y), g.cellH, fg)
-		if style.Bold {
-			drawText(screen, g.face, value, float32(x)+0.6, float32(y), g.cellH, fg)
+	variant := g.fonts.selectFace(style)
+	if visible && fg != bg {
+		if g.fonts.ligatures {
+			drawVariantText(dst, variant, value, x, y, g.cellH, fg)
+		} else {
+			offset := x
+			for _, r := range value {
+				drawVariantText(dst, variant, string(r), offset, y, g.cellH, fg)
+				offset += g.cellW
+			}
 		}
 	}
+
+	underlineColor := fg
+	if style.UnderlineColor.Mode != terminal.ColorDefault && !blinkHidden {
+		underlineColor = resolveColor(style.UnderlineColor, fg, g.theme.Palette)
+	}
 	if style.Underline {
-		vector.FillRect(screen, float32(x), float32(y)+float32(g.ascent)+1, width, 1, fg, false)
+		if style.DoubleUnderline {
+			vector.FillRect(dst, float32(x), float32(y)+float32(g.ascent)+1, width, 1, underlineColor, false)
+			vector.FillRect(dst, float32(x), float32(y)+float32(g.ascent)+3, width, 1, underlineColor, false)
+		} else {
+			vector.FillRect(dst, float32(x), float32(y)+float32(g.ascent)+1, width, 1, underlineColor, false)
+		}
 	}
 	if style.Strikethrough {
-		vector.FillRect(screen, float32(x), float32(y)+height/2, width, 1, fg, false)
+		vector.FillRect(dst, float32(x), float32(y)+height/2, width, 1, fg, false)
+	}
+}
+
+func drawVariantText(dst *ebiten.Image, variant faceVariant, value string, x, y float64, lineSpacing float64, clr color.Color) {
+	draw := func(offset float64) {
+		opts := &text.DrawOptions{}
+		opts.LayoutOptions.LineSpacing = lineSpacing
+		if variant.syntheticItalic {
+			opts.GeoM.Skew(-0.2, 0)
+		}
+		opts.GeoM.Translate(x+offset, y)
+		opts.ColorScale.ScaleWithColor(clr)
+		text.Draw(dst, value, variant.face, opts)
+	}
+	draw(0)
+	if variant.syntheticBold {
+		draw(0.6)
 	}
 }
 
@@ -164,21 +264,25 @@ func drawText(screen *ebiten.Image, face text.Face, value string, x, y float32, 
 	text.Draw(screen, value, face, opts)
 }
 
-func (g *game) drawCursor(screen *ebiten.Image, snap terminal.Snapshot, baseX, baseY float64, content mux.Rect) {
-	if !snap.Cursor.Visible || !ebiten.IsFocused() || !blinkVisible() {
+func (g *game) drawCursor(screen *ebiten.Image, entry *paneCacheEntry, baseX, baseY float64, content mux.Rect) {
+	cursor := entry.cursor
+	if !cursor.Visible || !ebiten.IsFocused() || !blinkVisible() {
 		return
 	}
-	row, col := snap.Cursor.Row, snap.Cursor.Col
+	row, col := cursor.Row, cursor.Col
 	if row < 0 || row >= content.H || col < 0 || col >= content.W {
 		return
 	}
-	width := g.cellW
-	if row < len(snap.Lines) && col < len(snap.Lines[row]) && snap.Lines[row][col].Width == 2 {
-		width *= 2
+	cells := entry.cursorWidth
+	if cells < 1 {
+		cells = 1
+	}
+	if col+cells > content.W {
+		cells = 1
 	}
 	x := baseX + float64(col)*g.cellW
 	y := baseY + float64(row)*g.cellH
-	vector.FillRect(screen, float32(x), float32(y), float32(width), float32(g.cellH), g.theme.Cursor, false)
+	vector.FillRect(screen, float32(x), float32(y), float32(float64(cells)*g.cellW), float32(g.cellH), g.theme.Cursor, false)
 }
 
 func (g *game) drawTabBar(screen *ebiten.Image, view mux.View) {
@@ -186,10 +290,13 @@ func (g *game) drawTabBar(screen *ebiten.Image, view mux.View) {
 	if width <= 0 {
 		return
 	}
-	vector.FillRect(screen, float32(g.padding), float32(g.padding), float32(width), float32(g.cellH), g.theme.BarBackground, false)
+	g.rects.reset()
+	g.rects.add(float64(g.padding), float64(g.padding), width, g.cellH, g.theme.BarBackground)
 
 	x := float64(g.padding)
 	maxX := float64(g.padding) + width
+	var labels []string
+	var positions []float64
 	for index, tab := range view.Tabs {
 		if x >= maxX {
 			break
@@ -200,18 +307,25 @@ func (g *game) drawTabBar(screen *ebiten.Image, view mux.View) {
 			break
 		}
 		labelWidth := text.Advance(label, g.face)
-		fg := g.theme.BarForeground
 		if tab.Active {
-			vector.FillRect(screen, float32(x), float32(g.padding), float32(labelWidth), float32(g.cellH), g.theme.TabActiveBackground, false)
-			fg = g.theme.TabActiveForeground
+			g.rects.add(x, float64(g.padding), labelWidth, g.cellH, g.theme.TabActiveBackground)
 		}
-		drawText(screen, g.face, label, float32(x), float32(g.padding), g.cellH, fg)
+		labels = append(labels, label)
+		positions = append(positions, x)
 		g.tabHits = append(g.tabHits, tabHit{
 			index: index,
 			x0:    int(math.Floor(x)),
 			x1:    int(math.Ceil(x + labelWidth)),
 		})
 		x += labelWidth
+	}
+	g.rects.flush(screen)
+	for i, label := range labels {
+		fg := g.theme.BarForeground
+		if view.Tabs[i].Active {
+			fg = g.theme.TabActiveForeground
+		}
+		drawText(screen, g.face, label, float32(positions[i]), float32(g.padding), g.cellH, fg)
 	}
 }
 
@@ -221,7 +335,8 @@ func (g *game) drawStatusBar(screen *ebiten.Image, view mux.View) {
 		return
 	}
 	y := float64(g.padding) + float64(1+view.Rows)*g.cellH
-	vector.FillRect(screen, float32(g.padding), float32(y), float32(width), float32(g.cellH), g.theme.BarBackground, false)
+	g.rects.reset()
+	g.rects.add(float64(g.padding), y, width, g.cellH, g.theme.BarBackground)
 
 	left := fmt.Sprintf(" %d/%d  %s prefix   ? help", view.ActiveTab+1, len(view.Tabs), g.prefix.label)
 	if g.prefixing {
@@ -235,6 +350,7 @@ func (g *game) drawStatusBar(screen *ebiten.Image, view mux.View) {
 	rightWidth := text.Advance(right, g.face)
 	maxLeft := width - rightWidth
 	left = fitText(left, maxLeft, g.face)
+	g.rects.flush(screen)
 	drawText(screen, g.face, left, float32(g.padding), float32(y), g.cellH, g.theme.BarForeground)
 	if right != "" {
 		rightX := float64(g.padding) + width - rightWidth

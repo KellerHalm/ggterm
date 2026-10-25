@@ -379,6 +379,12 @@ func (p *remotePane) Revision() uint64 {
 	return p.rev
 }
 
+func (p *remotePane) ScrollOffset() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.offset
+}
+
 func (p *remotePane) Resize(cols, rows int) error { return nil }
 
 // FetchStatus queries one running session without attaching to it.

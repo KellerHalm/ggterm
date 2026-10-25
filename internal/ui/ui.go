@@ -48,6 +48,7 @@ type tabHit struct {
 type game struct {
 	session session.Session
 	face    text.Face
+	fonts   *fontSet
 	done    <-chan struct{}
 	reload  func() (config.Settings, bool, error)
 
@@ -80,6 +81,11 @@ type game struct {
 
 	paneHits []paneHit
 	tabHits  []tabHit
+
+	rects         rectBatch
+	paneCache     map[int]*paneCacheEntry
+	seenPanes     map[int]bool
+	renderVersion uint64
 }
 
 // Run opens the multiplexer window and blocks until it is closed or all panes
@@ -112,7 +118,9 @@ func Run(s session.Session, opts Options) error {
 	ebiten.SetWindowSize(clampInt(width, minWindowW, 4096), clampInt(height, minWindowH, 4096))
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(tickRate)
-	err := ebiten.RunGame(g)
+	err := ebiten.RunGameWithOptions(g, &ebiten.RunGameOptions{
+		ScreenTransparent: settings.Window.Transparent,
+	})
 	if g.detached && err == nil {
 		return ErrDetached
 	}
@@ -120,7 +128,7 @@ func Run(s session.Session, opts Options) error {
 }
 
 func (g *game) applySettings(settings config.Settings, initial bool) error {
-	face, metrics, err := loadFace(settings.Font)
+	fonts, err := loadFontSet(settings.Font)
 	if err != nil {
 		return err
 	}
@@ -130,16 +138,20 @@ func (g *game) applySettings(settings config.Settings, initial bool) error {
 	}
 	padding := clampInt(settings.Padding, 0, 64)
 
+	face := fonts.variants[fontRegular].face
 	cellW := text.Advance("M", face)
 	if cellW <= 0 {
 		cellW = settings.Font.Size * 0.6
 	}
-	cellH := math.Ceil(metrics.HAscent + metrics.HDescent)
+	cellH := math.Ceil(fonts.metrics.HAscent + fonts.metrics.HDescent)
 	if cellH < settings.Font.Size {
 		cellH = math.Ceil(settings.Font.Size * 1.2)
 	}
 
+	g.clearPaneCache()
+	g.renderVersion++
 	g.settings = settings
+	g.fonts = fonts
 	g.face = face
 	g.theme = settings.Theme
 	g.bindings = bindings
@@ -147,7 +159,7 @@ func (g *game) applySettings(settings config.Settings, initial bool) error {
 	g.padding = padding
 	g.cellW = cellW
 	g.cellH = cellH
-	g.ascent = metrics.HAscent
+	g.ascent = fonts.metrics.HAscent
 	if !initial {
 		ebiten.SetWindowDecorated(settings.Decorated)
 	}
@@ -429,6 +441,8 @@ func (g *game) runAction(binding keyBinding, view mux.View) bool {
 		g.session.ToggleBroadcast()
 	case actionHelp:
 		g.showHelp = !g.showHelp
+	case actionFullscreen:
+		ebiten.SetFullscreen(!ebiten.IsFullscreen())
 	case actionDetach:
 		if g.session.Detach() {
 			g.detached = true

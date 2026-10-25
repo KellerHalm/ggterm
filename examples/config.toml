@@ -12,11 +12,20 @@ padding = 8
 decorated = true
 
 [font]
-# Available by name: Go Mono. Use path for any other TrueType/OpenType file.
+# Use the bundled Go Mono, a system family name, or a path to any font file.
 family = "Go Mono"
 size = 15
 # path = "C:/fonts/JetBrainsMono-Regular.ttf"
-# fallback = ["C:/Windows/Fonts/msyh.ttc"]
+# bold = "C:/fonts/JetBrainsMono-Bold.ttf"
+# italic = "C:/fonts/JetBrainsMono-Italic.ttf"
+# bold_italic = "C:/fonts/JetBrainsMono-BoldItalic.ttf"
+# fallback = ["C:/Windows/Fonts/msyh.ttc"]  # path or a family name
+ligatures = true
+
+[window]
+# Set the background alpha in [theme] (for example "#0b1020d0") to control
+# opacity. The window mode is applied at startup.
+transparent = false
 
 [theme]
 # Built-in: ggterm-dark, dracula, nord, gruvbox-dark, solarized-dark,

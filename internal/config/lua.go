@@ -172,6 +172,24 @@ func luaSetOption(L *lua.LState, settings *Settings, dir, fallbackDir string) er
 			return err
 		}
 		settings.Font.Path = resolveRelative(v, dir, fallbackDir)
+	case "font.bold":
+		v, err := asString()
+		if err != nil {
+			return err
+		}
+		settings.Font.Bold = resolveRelative(v, dir, fallbackDir)
+	case "font.italic":
+		v, err := asString()
+		if err != nil {
+			return err
+		}
+		settings.Font.Italic = resolveRelative(v, dir, fallbackDir)
+	case "font.bold_italic":
+		v, err := asString()
+		if err != nil {
+			return err
+		}
+		settings.Font.BoldItalic = resolveRelative(v, dir, fallbackDir)
 	case "font.size":
 		v, err := asFloat()
 		if err != nil {
@@ -181,6 +199,18 @@ func luaSetOption(L *lua.LState, settings *Settings, dir, fallbackDir string) er
 	case "font.fallback":
 		table := L.CheckTable(2)
 		settings.Font.Fallback = luaStringList(table)
+	case "font.ligatures":
+		v, err := asBool()
+		if err != nil {
+			return err
+		}
+		settings.Font.Ligatures = v
+	case "window.transparent":
+		v, err := asBool()
+		if err != nil {
+			return err
+		}
+		settings.Window.Transparent = v
 	case "theme":
 		v, err := asString()
 		if err != nil {

@@ -241,6 +241,13 @@ func (p *Pane) Revision() uint64 {
 	return p.term.Revision()
 }
 
+// ScrollOffset returns the current scrollback offset of the pane viewport.
+func (p *Pane) ScrollOffset() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.scroll
+}
+
 // Title returns the most recent window title reported by the application.
 func (p *Pane) Title() string {
 	return p.term.Title()

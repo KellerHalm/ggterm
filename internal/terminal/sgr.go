@@ -14,8 +14,12 @@ func (t *Terminal) setSGR(params []int) {
 			t.style.Faint = true
 		case 3:
 			t.style.Italic = true
-		case 4, 21:
+		case 4:
 			t.style.Underline = true
+			t.style.DoubleUnderline = false
+		case 21:
+			t.style.Underline = true
+			t.style.DoubleUnderline = true
 		case 5:
 			t.style.Blink = true
 		case 7:
@@ -29,6 +33,7 @@ func (t *Terminal) setSGR(params []int) {
 			t.style.Italic = false
 		case 24:
 			t.style.Underline = false
+			t.style.DoubleUnderline = false
 		case 25:
 			t.style.Blink = false
 		case 27:
@@ -52,7 +57,9 @@ func (t *Terminal) setSGR(params []int) {
 		case 48:
 			i = applyExtendedColor(params, i, &t.style.BG)
 		case 58:
-			i = applyExtendedColor(params, i, nil)
+			i = applyExtendedColor(params, i, &t.style.UnderlineColor)
+		case 59:
+			t.style.UnderlineColor = Color{}
 		}
 	}
 }

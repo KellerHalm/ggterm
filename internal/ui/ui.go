@@ -10,7 +10,12 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
 	"ggterm/internal/mux"
+	"ggterm/internal/session"
 )
+
+// ErrDetached is returned by Run when the user detaches from a background
+// session instead of quitting it.
+var ErrDetached = errors.New("ui: detached")
 
 // Options controls the terminal window.
 type Options struct {
@@ -29,7 +34,7 @@ const (
 )
 
 type paneHit struct {
-	pane   *mux.Pane
+	pane   mux.PaneView
 	x0, y0 int
 	x1, y1 int
 }
@@ -41,9 +46,9 @@ type tabHit struct {
 }
 
 type game struct {
-	mux  *mux.Mux
-	face *text.GoTextFace
-	done <-chan struct{}
+	session session.Session
+	face    *text.GoTextFace
+	done    <-chan struct{}
 
 	cellW, cellH float64
 	ascent       float64
@@ -53,12 +58,12 @@ type game struct {
 	contentRows   int
 	showBars      bool
 
-	scroll     map[int]int
 	wheelAccum float64
 	lastTitle  string
 
 	prefix   bool
 	showHelp bool
+	detached bool
 
 	chars []rune
 	keys  []ebiten.Key
@@ -68,10 +73,11 @@ type game struct {
 }
 
 // Run opens the multiplexer window and blocks until it is closed or all panes
-// have exited.
-func Run(m *mux.Mux, opts Options) error {
-	if m == nil {
-		return errors.New("ui: nil multiplexer")
+// have exited. It returns ErrDetached when the user asked to leave the session
+// running in the background.
+func Run(s session.Session, opts Options) error {
+	if s == nil {
+		return errors.New("ui: nil session")
 	}
 	size := opts.FontSize
 	if size <= 0 {
@@ -82,11 +88,10 @@ func Run(m *mux.Mux, opts Options) error {
 		return err
 	}
 	g := &game{
-		mux:    m,
-		face:   face,
-		done:   opts.Done,
-		ascent: metrics.HAscent,
-		scroll: make(map[int]int),
+		session: s,
+		face:    face,
+		done:    opts.Done,
+		ascent:  metrics.HAscent,
 	}
 	g.cellW = text.Advance("M", face)
 	if g.cellW <= 0 {
@@ -97,8 +102,8 @@ func Run(m *mux.Mux, opts Options) error {
 		g.cellH = math.Ceil(size * 1.2)
 	}
 
-	cols, rows := m.Cells()
-	g.view = m.Viewport(cols, rows)
+	cols, rows := s.Cells()
+	g.view = s.Viewport(cols, rows)
 	g.lastTitle = viewTitle(g.view)
 	width := int(math.Ceil(float64(cols)*g.cellW)) + 2*padding
 	height := int(math.Ceil(float64(rows+2)*g.cellH)) + 2*padding
@@ -106,7 +111,11 @@ func Run(m *mux.Mux, opts Options) error {
 	ebiten.SetWindowSize(clampInt(width, minWindowW, 4096), clampInt(height, minWindowH, 4096))
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetTPS(tickRate)
-	return ebiten.RunGame(g)
+	err = ebiten.RunGame(g)
+	if g.detached && err == nil {
+		return ErrDetached
+	}
+	return err
 }
 
 func (g *game) Update() error {
@@ -132,8 +141,8 @@ func (g *game) Update() error {
 	}
 	g.contentRows = clampInt(g.contentRows, 1, 1000)
 
-	g.view = g.mux.Viewport(cols, g.contentRows)
-	if g.mux.Empty() {
+	g.view = g.session.Viewport(cols, g.contentRows)
+	if g.session.Empty() {
 		return ebiten.Termination
 	}
 
@@ -184,7 +193,7 @@ func (g *game) handleInput(view mux.View) error {
 
 		if g.prefix {
 			if isPrefixKey(key, mods) {
-				g.mux.WriteInput([]byte{0x02})
+				g.session.WriteInput([]byte{0x02})
 				g.prefix = false
 				consumedChars = true
 				typed = true
@@ -212,23 +221,21 @@ func (g *game) handleInput(view mux.View) error {
 
 		switch key {
 		case ebiten.KeyPageUp:
-			snap := active.Snapshot(g.scrollOffset(active.ID()))
+			snap := active.Snapshot()
 			if mods.shift || !snap.AltScreen {
-				offset := g.scrollOffset(active.ID()) + pageStep(snap.Rows)
-				g.setScroll(active, offset, snap.ScrollbackLen)
+				active.Scroll(pageStep(snap.Rows))
 				continue
 			}
-			g.mux.WriteInput([]byte("\x1b[5~"))
+			g.session.WriteInput([]byte("\x1b[5~"))
 			typed = true
 			continue
 		case ebiten.KeyPageDown:
-			snap := active.Snapshot(g.scrollOffset(active.ID()))
+			snap := active.Snapshot()
 			if mods.shift || !snap.AltScreen {
-				offset := g.scrollOffset(active.ID()) - pageStep(snap.Rows)
-				g.setScroll(active, offset, snap.ScrollbackLen)
+				active.Scroll(-pageStep(snap.Rows))
 				continue
 			}
-			g.mux.WriteInput([]byte("\x1b[6~"))
+			g.session.WriteInput([]byte("\x1b[6~"))
 			typed = true
 			continue
 		}
@@ -237,7 +244,7 @@ func (g *game) handleInput(view mux.View) error {
 		if !ok {
 			continue
 		}
-		g.mux.WriteInput(sequence)
+		g.session.WriteInput(sequence)
 		typed = true
 	}
 
@@ -252,14 +259,14 @@ func (g *game) handleInput(view mux.View) error {
 				if r == 0 {
 					continue
 				}
-				g.mux.WriteInput([]byte(string(r)))
+				g.session.WriteInput([]byte(string(r)))
 				typed = true
 			}
 		}
 	}
 
 	if typed && active != nil {
-		g.setScroll(active, 0, 0)
+		active.ResetScroll()
 		g.wheelAccum = 0
 	}
 	return nil
@@ -281,7 +288,7 @@ func (g *game) handleWheel(view mux.View) error {
 	if active == nil {
 		return nil
 	}
-	snap := active.Snapshot(g.scrollOffset(active.ID()))
+	snap := active.Snapshot()
 	if snap.AltScreen {
 		sequence := []byte("\x1b[A")
 		if steps < 0 {
@@ -289,12 +296,11 @@ func (g *game) handleWheel(view mux.View) error {
 			steps = -steps
 		}
 		for i := 0; i < steps; i++ {
-			g.mux.WriteInput(sequence)
+			g.session.WriteInput(sequence)
 		}
 		return nil
 	}
-	offset := g.scrollOffset(active.ID()) + steps*wheelPerStep
-	g.setScroll(active, offset, snap.ScrollbackLen)
+	active.Scroll(steps * wheelPerStep)
 	return nil
 }
 
@@ -305,13 +311,13 @@ func (g *game) handleMouse(view mux.View) error {
 	x, y := ebiten.CursorPosition()
 	for _, hit := range g.tabHits {
 		if x >= hit.x0 && x < hit.x1 && y >= padding && y < padding+int(g.cellH) {
-			g.mux.SelectTab(hit.index)
+			g.session.SelectTab(hit.index)
 			return nil
 		}
 	}
 	for _, hit := range g.paneHits {
 		if x >= hit.x0 && x < hit.x1 && y >= hit.y0 && y < hit.y1 {
-			g.mux.FocusPane(hit.pane)
+			g.session.FocusPane(hit.pane.ID())
 			return nil
 		}
 	}
@@ -321,52 +327,45 @@ func (g *game) handleMouse(view mux.View) error {
 func (g *game) runAction(binding keyBinding, view mux.View) bool {
 	switch binding.action {
 	case actionSplitVertical:
-		_ = g.mux.Split(mux.Vertical)
+		_ = g.session.Split(mux.Vertical)
 	case actionSplitHorizontal:
-		_ = g.mux.Split(mux.Horizontal)
+		_ = g.session.Split(mux.Horizontal)
 	case actionClosePane:
-		g.mux.CloseActivePane()
+		g.session.CloseActivePane()
 	case actionNewTab:
-		_ = g.mux.NewTab()
+		_ = g.session.NewTab()
 	case actionCloseTab:
-		g.mux.CloseTab()
+		g.session.CloseTab()
 	case actionNextTab:
-		g.mux.NextTab()
+		g.session.NextTab()
 	case actionPrevTab:
-		g.mux.PrevTab()
+		g.session.PrevTab()
 	case actionSelectTab:
-		g.mux.SelectTab(binding.arg)
+		g.session.SelectTab(binding.arg)
 	case actionFocusNext:
-		g.mux.FocusNext()
+		g.session.FocusNext()
 	case actionFocusLeft:
-		g.mux.FocusDirection(mux.MoveLeft)
+		g.session.FocusDirection(mux.MoveLeft)
 	case actionFocusRight:
-		g.mux.FocusDirection(mux.MoveRight)
+		g.session.FocusDirection(mux.MoveRight)
 	case actionFocusUp:
-		g.mux.FocusDirection(mux.MoveUp)
+		g.session.FocusDirection(mux.MoveUp)
 	case actionFocusDown:
-		g.mux.FocusDirection(mux.MoveDown)
+		g.session.FocusDirection(mux.MoveDown)
 	case actionToggleBroadcast:
-		g.mux.ToggleBroadcast()
+		g.session.ToggleBroadcast()
 	case actionHelp:
 		g.showHelp = !g.showHelp
+	case actionDetach:
+		if g.session.Detach() {
+			g.detached = true
+			return true
+		}
 	case actionQuit:
+		g.session.Quit()
 		return true
 	}
 	return false
-}
-
-func (g *game) scrollOffset(id int) int {
-	return g.scroll[id]
-}
-
-func (g *game) setScroll(pane *mux.Pane, offset, limit int) {
-	offset = clampOffset(offset, limit)
-	if offset == 0 {
-		delete(g.scroll, pane.ID())
-		return
-	}
-	g.scroll[pane.ID()] = offset
 }
 
 func isModifierKey(key ebiten.Key) bool {

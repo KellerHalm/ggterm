@@ -12,15 +12,6 @@ import (
 // LayoutVersion is the current on-disk layout format version.
 const LayoutVersion = 1
 
-// DefaultLayoutPath returns the per-user path used to restore the last layout.
-func DefaultLayoutPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "ggterm", "layout.json"), nil
-}
-
 type layoutState struct {
 	Version   int        `json:"version"`
 	ActiveTab int        `json:"active_tab"`

@@ -139,7 +139,7 @@ func firstPane(n *Node) *Pane {
 // PaneLayout describes where a pane is drawn. Rect is the outer rectangle and
 // Content excludes the one-cell frame used for borders.
 type PaneLayout struct {
-	Pane    *Pane
+	Pane    PaneView
 	Rect    Rect
 	Content Rect
 	Active  bool
@@ -197,7 +197,7 @@ func (n *Node) layout(area Rect, active *Pane, out []PaneLayout) []PaneLayout {
 	return n.Second.layout(Rect{X: area.X, Y: area.Y + firstH, W: area.W, H: area.H - firstH}, active, out)
 }
 
-func findDirectional(panes []PaneLayout, active *Pane, dir MoveDirection) *Pane {
+func findDirectional(panes []PaneLayout, active *Pane, dir MoveDirection) PaneView {
 	var current *PaneLayout
 	for i := range panes {
 		if panes[i].Pane == active {

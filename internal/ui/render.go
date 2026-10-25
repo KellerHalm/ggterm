@@ -66,7 +66,7 @@ func (g *game) drawPane(screen *ebiten.Image, layout mux.PaneLayout, contentY fl
 		y1:   int(math.Ceil(y0 + height)),
 	})
 
-	snap := layout.Pane.Snapshot(g.scrollOffset(layout.Pane.ID()))
+	snap := layout.Pane.Snapshot()
 	for row := 0; row < layout.Content.H && row < len(snap.Lines); row++ {
 		g.drawLine(screen, contentX, contentYPos, row, snap.Lines[row], layout.Content.W)
 	}
@@ -225,7 +225,7 @@ func (g *game) drawStatusBar(screen *ebiten.Image, view mux.View) {
 
 	left := fmt.Sprintf(" %d/%d  Ctrl+B prefix   ? help", view.ActiveTab+1, len(view.Tabs))
 	if g.prefix {
-		left = " PREFIX  %/\\ split V   \"/- split H   c tab   x close   ? help"
+		left = " PREFIX  %/\\ split V   \"/- split H   c tab   x close   d detach   ? help"
 	}
 	right := ""
 	if view.Broadcast {

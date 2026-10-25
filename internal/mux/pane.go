@@ -32,6 +32,7 @@ type Pane struct {
 	sess     pty.Session
 	cols     int
 	rows     int
+	scroll   int
 	alive    bool
 	exitCode int
 	exitErr  error
@@ -194,9 +195,50 @@ func (p *Pane) Write(data []byte) error {
 	return nil
 }
 
-// Snapshot returns a consistent copy of the visible terminal buffer.
-func (p *Pane) Snapshot(scrollOffset int) terminal.Snapshot {
-	return p.term.Snapshot(scrollOffset)
+// Snapshot returns a consistent copy of the visible terminal buffer at the
+// pane's current scroll offset.
+func (p *Pane) Snapshot() terminal.Snapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.term.Snapshot(p.scroll)
+}
+
+// Scroll moves the viewport by delta lines into the scrollback history.
+// Positive values scroll up (towards older output).
+func (p *Pane) Scroll(delta int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scroll = p.clampScroll(p.scroll + delta)
+}
+
+// ScrollTo positions the viewport at an absolute scrollback offset.
+func (p *Pane) ScrollTo(offset int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scroll = p.clampScroll(offset)
+}
+
+func (p *Pane) clampScroll(offset int) int {
+	limit, alt := p.term.ScrollInfo()
+	if alt || offset < 0 {
+		return 0
+	}
+	if offset > limit {
+		return limit
+	}
+	return offset
+}
+
+// ResetScroll returns the viewport to the live output.
+func (p *Pane) ResetScroll() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.scroll = 0
+}
+
+// Revision reports how many times the terminal content may have changed.
+func (p *Pane) Revision() uint64 {
+	return p.term.Revision()
 }
 
 // Title returns the most recent window title reported by the application.

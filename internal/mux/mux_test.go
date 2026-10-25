@@ -292,7 +292,7 @@ func TestPanePumpFeedsTerminalAndTitle(t *testing.T) {
 
 	session.output <- []byte("hello")
 	waitFor(t, func() bool {
-		snap := m.tabs[0].Active.Snapshot(0)
+		snap := m.tabs[0].Active.Snapshot()
 		return len(snap.Lines) > 0 && len(snap.Lines[0]) >= 5 &&
 			snap.Lines[0][0].Rune == 'h' &&
 			snap.Lines[0][1].Rune == 'e' &&

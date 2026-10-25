@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"ggterm/internal/pty"
+	"ggterm/internal/terminal"
 )
 
 // ErrTooSmall is returned when the active pane cannot be split any further.
@@ -48,6 +49,20 @@ func defaultStart(opts StartOptions) (pty.Session, error) {
 		Cols:    opts.Cols,
 		Rows:    opts.Rows,
 	})
+}
+
+// PaneView is the read-only pane surface rendered by the UI. It is implemented
+// by local panes and by remote panes attached to a session daemon.
+type PaneView interface {
+	ID() int
+	Snapshot() terminal.Snapshot
+	Scroll(delta int)
+	ScrollTo(offset int)
+	ResetScroll()
+	Title() string
+	Alive() bool
+	Revision() uint64
+	Resize(cols, rows int) error
 }
 
 // Tab is a named group of panes with its own layout tree.
@@ -97,7 +112,7 @@ type View struct {
 }
 
 // ActivePane returns the currently focused pane, or nil.
-func (v View) ActivePane() *Pane {
+func (v View) ActivePane() PaneView {
 	for _, layout := range v.Panes {
 		if layout.Active {
 			return layout.Pane
@@ -163,6 +178,25 @@ func (m *Mux) Empty() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.tabs) == 0
+}
+
+// Stats returns the number of tabs and the total number of live panes.
+func (m *Mux) Stats() (tabs, panes int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, tab := range m.tabs {
+		if tab.Root != nil {
+			panes += len(tab.Root.panes(nil))
+		}
+	}
+	return len(m.tabs), panes
+}
+
+// Prune removes panes whose process has exited and drops empty tabs.
+func (m *Mux) Prune() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pruneLocked()
 }
 
 // EmptyChan is closed when the last pane of the last tab goes away.
@@ -353,16 +387,21 @@ func (m *Mux) FocusDirection(dir MoveDirection) {
 		return
 	}
 	panes := tab.Root.layout(Rect{W: m.cols, H: m.rows}, tab.Active, nil)
-	if next := findDirectional(panes, tab.Active, dir); next != nil {
-		tab.Active = next
+	next := findDirectional(panes, tab.Active, dir)
+	if next == nil {
+		return
+	}
+	for _, candidate := range tab.Root.panes(nil) {
+		if candidate.ID() == next.ID() {
+			tab.Active = candidate
+			return
+		}
 	}
 }
 
-// FocusPane focuses a pane if it belongs to the active tab.
-func (m *Mux) FocusPane(pane *Pane) {
-	if pane == nil {
-		return
-	}
+// FocusPaneID focuses the pane with the given ID if it belongs to the active
+// tab.
+func (m *Mux) FocusPaneID(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tab := m.activeTabLocked()
@@ -370,8 +409,8 @@ func (m *Mux) FocusPane(pane *Pane) {
 		return
 	}
 	for _, candidate := range tab.Root.panes(nil) {
-		if candidate == pane {
-			tab.Active = pane
+		if candidate.ID() == id {
+			tab.Active = candidate
 			return
 		}
 	}

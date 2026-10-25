@@ -21,6 +21,7 @@ const (
 	actionFocusDown
 	actionToggleBroadcast
 	actionHelp
+	actionDetach
 	actionQuit
 )
 
@@ -56,7 +57,8 @@ var defaultBindings = []keyBinding{
 	{key: ebiten.KeyArrowRight, action: actionFocusRight, desc: "focus pane right"},
 	{key: ebiten.KeyB, action: actionToggleBroadcast, desc: "toggle input broadcast"},
 	{key: ebiten.KeySlash, shift: true, action: actionHelp, desc: "show help"},
-	{key: ebiten.KeyQ, action: actionQuit, desc: "quit ggterm"},
+	{key: ebiten.KeyD, action: actionDetach, desc: "detach, keep session running"},
+	{key: ebiten.KeyQ, action: actionQuit, desc: "quit and terminate the session"},
 }
 
 func init() {
@@ -106,7 +108,8 @@ var helpLines = []string{
 	"&            close tab",
 	"b            toggle broadcast input",
 	"?            toggle this help",
-	"q            quit ggterm",
+	"d            detach (session keeps running)",
+	"q            quit and terminate the session",
 	"",
 	"Mouse: click a pane or tab to focus it.",
 }

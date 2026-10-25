@@ -4,9 +4,17 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"text/tabwriter"
+	"time"
 
+	"ggterm/internal/daemon"
 	"ggterm/internal/mux"
+	"ggterm/internal/session"
 	"ggterm/internal/ui"
 )
 
@@ -24,7 +32,14 @@ func run() error {
 	scrollback := flag.Int("scrollback", 10000, "scrollback buffer size in lines")
 	fontSize := flag.Float64("font-size", 15, "font size in points")
 	restore := flag.Bool("restore", true, "restore tabs and split layout from the previous session")
-	layoutFile := flag.String("layout-file", "", "layout file path (default: user config directory)")
+	layoutFile := flag.String("layout-file", "", "layout file path (default: session file in the config directory)")
+
+	sessionName := flag.String("session", daemon.DefaultSession, "session name")
+	noDaemon := flag.Bool("no-daemon", false, "run without a background daemon (detach is unavailable)")
+	listSessions := flag.Bool("list", false, "list running sessions and exit")
+	killSession := flag.Bool("kill", false, "terminate the selected session and exit")
+	daemonMode := flag.Bool("daemon", false, "run as a session daemon (internal)")
+	socketFlag := flag.String("socket", "", "daemon endpoint (internal)")
 	flag.Parse()
 
 	if *cols <= 0 || *rows <= 0 {
@@ -33,12 +48,33 @@ func run() error {
 	if *scrollback < 0 {
 		return fmt.Errorf("scrollback must be non-negative, got %d", *scrollback)
 	}
+	if err := daemon.ValidateSessionName(*sessionName); err != nil {
+		return err
+	}
 
+	if *listSessions {
+		return printSessions()
+	}
+
+	socket := *socketFlag
+	if socket == "" {
+		path, err := daemon.SocketPath(*sessionName)
+		if err != nil {
+			return err
+		}
+		socket = path
+	}
 	path := *layoutFile
 	if path == "" {
-		if defaultPath, err := mux.DefaultLayoutPath(); err == nil {
-			path = defaultPath
+		defaultPath, err := daemon.LayoutPath(*sessionName)
+		if err != nil {
+			return err
 		}
+		path = defaultPath
+	}
+
+	if *killSession {
+		return kill(*sessionName, socket, path)
 	}
 
 	cfg := mux.Config{
@@ -48,33 +84,184 @@ func run() error {
 		Command:       *shell,
 	}
 
-	var workspace *mux.Mux
-	var err error
-	if *restore && path != "" {
-		workspace, err = mux.Restore(path, cfg)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "ggterm: restore layout: %v\n", err)
-			}
-			workspace = nil
-		}
+	if *daemonMode {
+		return runDaemon(*sessionName, socket, path, cfg, *restore)
 	}
-	if workspace == nil {
-		workspace, err = mux.New(cfg)
-		if err != nil {
-			return fmt.Errorf("start terminal session: %w", err)
-		}
+	if *noDaemon {
+		return runLocal(cfg, path, *restore, *fontSize)
+	}
+	return runAttached(*sessionName, socket, path, cfg, *restore, *fontSize)
+}
+
+func runDaemon(name, socket, layoutPath string, cfg mux.Config, restore bool) error {
+	logger := log.New(os.Stderr, "ggterm daemon "+name+": ", log.LstdFlags)
+	workspace, err := restoreOrNew(layoutPath, cfg, restore, logger.Printf)
+	if err != nil {
+		return err
 	}
 
-	runErr := ui.Run(workspace, ui.Options{FontSize: *fontSize})
+	server, err := daemon.New(daemon.Options{
+		Session:    name,
+		Mux:        workspace,
+		LayoutPath: layoutPath,
+		Logger:     logger,
+	})
+	if err != nil {
+		workspace.Shutdown()
+		return err
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		<-signals
+		server.Stop()
+	}()
+
+	err = server.ListenAndServe(socket)
+	if errors.Is(err, daemon.ErrAlreadyRunning) {
+		workspace.Shutdown()
+		return nil
+	}
+	server.Stop()
+	return err
+}
+
+func runLocal(cfg mux.Config, layoutPath string, restore bool, fontSize float64) error {
+	workspace, err := restoreOrNew(layoutPath, cfg, restore, func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "ggterm: "+format+"\n", args...)
+	})
+	if err != nil {
+		return err
+	}
+
+	runErr := ui.Run(session.NewLocal(workspace), ui.Options{FontSize: fontSize})
+	if errors.Is(runErr, ui.ErrDetached) {
+		runErr = nil
+	}
 
 	var saveErr error
-	if path != "" {
-		if err := mux.Save(path, workspace); err != nil {
+	if layoutPath != "" {
+		if err := mux.Save(layoutPath, workspace); err != nil {
 			saveErr = fmt.Errorf("save layout: %w", err)
 		}
 	}
 	workspace.Shutdown()
-
 	return errors.Join(runErr, saveErr)
+}
+
+func runAttached(name, socket, layoutPath string, cfg mux.Config, restore bool, fontSize float64) error {
+	client, err := attachOrSpawn(name, socket, layoutPath, cfg, restore)
+	if err != nil {
+		return err
+	}
+
+	runErr := ui.Run(client, ui.Options{FontSize: fontSize})
+	_ = client.Close()
+	if errors.Is(runErr, ui.ErrDetached) {
+		return nil
+	}
+	return runErr
+}
+
+func attachOrSpawn(name, socket, layoutPath string, cfg mux.Config, restore bool) (*daemon.Client, error) {
+	client, err := daemon.Attach(socket, cfg.Cols, cfg.Rows)
+	if err == nil {
+		return client, nil
+	}
+
+	if !daemon.SocketAlive(socket) {
+		exe, exeErr := os.Executable()
+		if exeErr != nil {
+			return nil, exeErr
+		}
+		logPath, _ := daemon.LogPath()
+		dir, _ := os.Getwd()
+		args := daemonCommand(name, socket, layoutPath, cfg, restore)
+		if spawnErr := daemon.Spawn(exe, args, logPath, dir); spawnErr != nil {
+			return nil, spawnErr
+		}
+		if err := daemon.WaitForSocket(socket, 8*time.Second); err != nil {
+			return nil, fmt.Errorf("start session %q: %w", name, err)
+		}
+	}
+
+	for attempt := 0; attempt < 30; attempt++ {
+		client, err = daemon.Attach(socket, cfg.Cols, cfg.Rows)
+		if err == nil {
+			return client, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("attach to session %q: %w", name, err)
+}
+
+func daemonCommand(name, socket, layoutPath string, cfg mux.Config, restore bool) []string {
+	args := []string{
+		"--daemon",
+		"--session", name,
+		"--socket", socket,
+		"--layout-file", layoutPath,
+		"--cols", strconv.Itoa(cfg.Cols),
+		"--rows", strconv.Itoa(cfg.Rows),
+		"--scrollback", strconv.Itoa(cfg.MaxScrollback),
+		"--restore=" + strconv.FormatBool(restore),
+	}
+	if cfg.Command != "" {
+		args = append(args, "--shell", cfg.Command)
+	}
+	return args
+}
+
+func restoreOrNew(layoutPath string, cfg mux.Config, restore bool, logf func(string, ...any)) (*mux.Mux, error) {
+	if restore && layoutPath != "" {
+		workspace, err := mux.Restore(layoutPath, cfg)
+		if err == nil {
+			return workspace, nil
+		}
+		if !os.IsNotExist(err) && logf != nil {
+			logf("restore layout: %v", err)
+		}
+	}
+	workspace, err := mux.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("start terminal session: %w", err)
+	}
+	return workspace, nil
+}
+
+func printSessions() error {
+	statuses, err := daemon.ListStatuses()
+	if err != nil {
+		return err
+	}
+	if len(statuses) == 0 {
+		fmt.Println("no running sessions")
+		return nil
+	}
+	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(writer, "NAME\tPID\tSIZE\tTABS\tPANES\tATTACHED")
+	for _, status := range statuses {
+		attached := "no"
+		if status.Attached {
+			attached = "yes"
+		}
+		fmt.Fprintf(writer, "%s\t%d\t%dx%d\t%d\t%d\t%s\n",
+			status.Session, status.PID, status.Cols, status.Rows,
+			status.Tabs, status.Panes, attached)
+	}
+	return writer.Flush()
+}
+
+func kill(name, socket, layoutPath string) error {
+	if err := daemon.Kill(socket); err != nil {
+		fmt.Printf("session %q is not running\n", name)
+		return nil
+	}
+	if layoutPath != "" {
+		_ = mux.Remove(layoutPath)
+	}
+	fmt.Printf("session %q terminated\n", name)
+	return nil
 }

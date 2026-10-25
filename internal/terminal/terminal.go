@@ -40,6 +40,8 @@ type Terminal struct {
 	utf8buf    []byte
 	utf8expect int
 	responses  [][]byte
+
+	revision uint64
 }
 
 func New(cfg Config) *Terminal {
@@ -73,10 +75,21 @@ func New(cfg Config) *Terminal {
 func (t *Terminal) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if len(p) > 0 {
+		t.revision++
+	}
 	for _, b := range p {
 		t.processByte(b)
 	}
 	return len(p), nil
+}
+
+// Revision increases whenever the terminal content or title may have changed.
+// It allows remote frontends to request only the panes that need redrawing.
+func (t *Terminal) Revision() uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.revision
 }
 
 func (t *Terminal) Resize(cols, rows int) {
@@ -93,6 +106,7 @@ func (t *Terminal) Resize(cols, rows int) {
 	}
 	t.cfg.Cols = cols
 	t.cfg.Rows = rows
+	t.revision++
 	t.grid.resize(rows, cols)
 	if t.altGrid != nil {
 		t.altGrid.resize(rows, cols)
@@ -177,6 +191,14 @@ func (t *Terminal) Title() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.title
+}
+
+// ScrollInfo returns the number of scrollback lines and whether the primary
+// screen is hidden by the alternate screen.
+func (t *Terminal) ScrollInfo() (scrollbackLen int, altScreen bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.scrollback), t.altScreen
 }
 
 func (t *Terminal) TakeResponses() [][]byte {

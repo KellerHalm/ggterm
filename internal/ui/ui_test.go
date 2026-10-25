@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
 	"ggterm/internal/terminal"
 )
@@ -89,5 +90,74 @@ func Test_clampOffset(t *testing.T) {
 	}
 	if got := clampOffset(4, 10); got != 4 {
 		t.Errorf("valid offset = %d, want 4", got)
+	}
+}
+
+func Test_lookupBinding(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    ebiten.Key
+		mods   modifiers
+		want   action
+		arg    int
+		wantOK bool
+	}{
+		{"new tab", ebiten.KeyC, modifiers{}, actionNewTab, 0, true},
+		{"close pane", ebiten.KeyX, modifiers{}, actionClosePane, 0, true},
+		{"split vertical percent", ebiten.KeyDigit5, modifiers{shift: true}, actionSplitVertical, 0, true},
+		{"split vertical slash", ebiten.KeyBackslash, modifiers{}, actionSplitVertical, 0, true},
+		{"split horizontal minus", ebiten.KeyMinus, modifiers{}, actionSplitHorizontal, 0, true},
+		{"split horizontal quote", ebiten.KeyQuote, modifiers{shift: true}, actionSplitHorizontal, 0, true},
+		{"close tab", ebiten.KeyDigit7, modifiers{shift: true}, actionCloseTab, 0, true},
+		{"select tab 1", ebiten.KeyDigit1, modifiers{}, actionSelectTab, 0, true},
+		{"select tab 9", ebiten.KeyDigit9, modifiers{}, actionSelectTab, 8, true},
+		{"help", ebiten.KeySlash, modifiers{shift: true}, actionHelp, 0, true},
+		{"quit", ebiten.KeyQ, modifiers{}, actionQuit, 0, true},
+		{"ctrl blocks", ebiten.KeyC, modifiers{ctrl: true}, actionNone, 0, false},
+		{"alt blocks", ebiten.KeyC, modifiers{alt: true}, actionNone, 0, false},
+		{"unbound", ebiten.KeyEscape, modifiers{}, actionNone, 0, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			binding, ok := lookupBinding(test.key, test.mods)
+			if ok != test.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, test.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if binding.action != test.want {
+				t.Errorf("action = %v, want %v", binding.action, test.want)
+			}
+			if binding.arg != test.arg {
+				t.Errorf("arg = %d, want %d", binding.arg, test.arg)
+			}
+		})
+	}
+}
+
+func Test_isPrefixKey(t *testing.T) {
+	if !isPrefixKey(ebiten.KeyB, modifiers{ctrl: true}) {
+		t.Error("Ctrl+B is not the prefix key")
+	}
+	if isPrefixKey(ebiten.KeyB, modifiers{ctrl: true, alt: true}) {
+		t.Error("Ctrl+Alt+B must not be the prefix key")
+	}
+	if isPrefixKey(ebiten.KeyB, modifiers{}) {
+		t.Error("plain B must not be the prefix key")
+	}
+}
+
+func Test_fitText(t *testing.T) {
+	face, _, err := newFace(15)
+	if err != nil {
+		t.Fatal(err)
+	}
+	width := text.Advance("hello world", face)
+	if got := fitText("hello world", width+1, face); got != "hello world" {
+		t.Errorf("fitted = %q, want original", got)
+	}
+	if got := fitText("hello world", width/2, face); got == "hello world" || got == "" {
+		t.Errorf("fitted = %q, want truncated text", got)
 	}
 }

@@ -2,8 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +38,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 		g.drawPane(screen, layout, contentY)
 	}
 	g.prunePaneCache(g.seenPanes)
+	g.pruneGraphicCache()
 	if g.showBars {
 		g.drawStatusBar(screen, view)
 	}
@@ -85,6 +88,66 @@ func (g *game) drawPane(screen *ebiten.Image, layout mux.PaneLayout, contentY fl
 	}
 }
 
+// drawPaneGraphics renders either the placements behind the text (negative
+// z) or in front of it (zero and positive z). Drawing into the pane's own
+// offscreen image keeps neighbouring panes from being overdrawn.
+func (g *game) drawPaneGraphics(dst *ebiten.Image, placements []terminal.ImagePlacement, negative bool) {
+	if len(placements) == 0 {
+		return
+	}
+	ordered := make([]terminal.ImagePlacement, 0, len(placements))
+	for _, placement := range placements {
+		if (placement.Z < 0) == negative {
+			ordered = append(ordered, placement)
+		}
+	}
+	slices.SortStableFunc(ordered, func(a, b terminal.ImagePlacement) int {
+		return a.Z - b.Z
+	})
+	for _, placement := range ordered {
+		texture := g.graphicImage(placement.Graphic)
+		if texture == nil {
+			continue
+		}
+		srcW, srcH := placement.SourceW, placement.SourceH
+		if srcW <= 0 || srcH <= 0 {
+			continue
+		}
+		srcX, srcY := placement.SourceX, placement.SourceY
+		if srcX < 0 {
+			srcX = 0
+		}
+		if srcY < 0 {
+			srcY = 0
+		}
+		if srcX+srcW > placement.Graphic.Width {
+			srcW = placement.Graphic.Width - srcX
+		}
+		if srcY+srcH > placement.Graphic.Height {
+			srcH = placement.Graphic.Height - srcY
+		}
+		if srcW <= 0 || srcH <= 0 {
+			continue
+		}
+		source, ok := texture.SubImage(image.Rect(srcX, srcY, srcX+srcW, srcY+srcH)).(*ebiten.Image)
+		if !ok {
+			continue
+		}
+		width := float64(placement.Cols) * g.cellW
+		height := float64(placement.Rows) * g.cellH
+		if width <= 0 || height <= 0 {
+			continue
+		}
+		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Scale(width/float64(srcW), height/float64(srcH))
+		op.GeoM.Translate(
+			float64(placement.Col)*g.cellW+float64(placement.X),
+			float64(placement.Row)*g.cellH+float64(placement.Y),
+		)
+		dst.DrawImage(source, op)
+	}
+}
+
 // drawSnapshot renders terminal cells into a pane-sized offscreen image. The
 // image is cached by revision so idle panes cost a single DrawImage per frame.
 func (g *game) drawSnapshot(dst *ebiten.Image, snap terminal.Snapshot, content mux.Rect) {
@@ -99,6 +162,8 @@ func (g *game) drawSnapshot(dst *ebiten.Image, snap terminal.Snapshot, content m
 		g.collectLineBackground(0, 0, row, snap.Lines[row], limit)
 	}
 	g.rects.flush(dst)
+
+	g.drawPaneGraphics(dst, snap.Images, true)
 
 	for row := 0; row < rows; row++ {
 		g.drawLine(dst, 0, 0, row, snap.Lines[row], limit)

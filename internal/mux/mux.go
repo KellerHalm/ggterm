@@ -514,6 +514,30 @@ func (m *Mux) Viewport(cols, rows int) View {
 	return view
 }
 
+// SetCellSize propagates the frontend's character cell size to every pane.
+// Images without an explicit size in cells use it for placement.
+func (m *Mux) SetCellSize(width, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	m.mu.Lock()
+	panes := m.allPanesLocked()
+	m.mu.Unlock()
+	for _, pane := range panes {
+		pane.SetCellSize(width, height)
+	}
+}
+
+func (m *Mux) allPanesLocked() []*Pane {
+	var panes []*Pane
+	for _, tab := range m.tabs {
+		if tab.Root != nil {
+			panes = tab.Root.panes(panes)
+		}
+	}
+	return panes
+}
+
 // Shutdown terminates all panes and waits briefly for them to exit.
 func (m *Mux) Shutdown() {
 	m.mu.Lock()

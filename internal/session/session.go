@@ -12,6 +12,10 @@ type Session interface {
 	Viewport(cols, rows int) mux.View
 	Empty() bool
 
+	// SetCellSize reports the pixel dimensions of one character cell so the
+	// terminal can scale graphics that are sized in pixels.
+	SetCellSize(width, height int)
+
 	WriteInput(data []byte)
 
 	Split(dir mux.Direction) error
@@ -44,6 +48,8 @@ type Local struct {
 func NewLocal(m *mux.Mux) Local {
 	return Local{Mux: m}
 }
+
+func (l Local) SetCellSize(width, height int) { l.Mux.SetCellSize(width, height) }
 
 func (l Local) FocusPane(id int) { l.Mux.FocusPaneID(id) }
 

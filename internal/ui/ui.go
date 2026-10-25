@@ -85,6 +85,7 @@ type game struct {
 	rects         rectBatch
 	paneCache     map[int]*paneCacheEntry
 	seenPanes     map[int]bool
+	graphicCache  map[uint64]*graphicCacheEntry
 	renderVersion uint64
 }
 
@@ -160,6 +161,12 @@ func (g *game) applySettings(settings config.Settings, initial bool) error {
 	g.cellW = cellW
 	g.cellH = cellH
 	g.ascent = fonts.metrics.HAscent
+	if g.session != nil {
+		g.session.SetCellSize(
+			clampInt(int(math.Ceil(cellW)), 1, 256),
+			clampInt(int(math.Ceil(cellH)), 1, 256),
+		)
+	}
 	if !initial {
 		ebiten.SetWindowDecorated(settings.Decorated)
 	}

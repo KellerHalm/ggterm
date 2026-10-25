@@ -158,6 +158,12 @@ func (p *Pane) Size() (cols, rows int) {
 	return p.cols, p.rows
 }
 
+// SetCellSize informs the emulator about the pixel size of one character
+// cell, which is used to resolve graphics placements.
+func (p *Pane) SetCellSize(width, height int) {
+	p.term.SetCellSize(width, height)
+}
+
 // Resize applies new content dimensions to both the buffer and the process.
 func (p *Pane) Resize(cols, rows int) error {
 	if cols <= 0 {

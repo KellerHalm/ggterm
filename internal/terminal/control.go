@@ -59,7 +59,12 @@ func (t *Terminal) handleEscape(b byte) {
 		t.parser.reset()
 	case '(', ')', '*', '+', '#', '%', ' ', 'N', 'O':
 		t.parser.state = stateEscapeCharset
-	case 'P', 'X', '^', '_':
+	case '_':
+		t.parser.state = stateAPC
+		t.parser.apcBuf = t.parser.apcBuf[:0]
+		t.parser.apcEsc = false
+		t.parser.apcOverflow = false
+	case 'P', 'X', '^':
 		t.parser.state = stateIgnore
 		t.parser.oscBuf = t.parser.oscBuf[:0]
 	default:
@@ -107,6 +112,44 @@ func (t *Terminal) handleOSC(b byte) {
 	if len(t.parser.oscBuf) > 4096 {
 		t.parser.reset()
 	}
+}
+
+func (t *Terminal) handleAPC(b byte) {
+	p := t.parser
+	if p.apcEsc {
+		if b == '\\' {
+			data := append([]byte(nil), p.apcBuf...)
+			overflow := p.apcOverflow
+			p.reset()
+			if !overflow {
+				t.executeAPC(data)
+			}
+			return
+		}
+		if b == 0x18 || b == 0x1A {
+			p.reset()
+			return
+		}
+		p.apcEsc = false
+		if !p.apcOverflow {
+			p.apcBuf = append(p.apcBuf, 0x1B)
+		}
+	}
+	switch {
+	case b == 0x1B:
+		p.apcEsc = true
+		return
+	case b == 0x18 || b == 0x1A || b == 0x9C:
+		p.reset()
+		return
+	case p.apcOverflow:
+		return
+	case len(p.apcBuf) >= maxGraphicPayload:
+		p.apcOverflow = true
+		p.apcBuf = p.apcBuf[:0]
+		return
+	}
+	p.apcBuf = append(p.apcBuf, b)
 }
 
 func (t *Terminal) printRune(r rune) {
@@ -207,6 +250,10 @@ func (t *Terminal) scrollRegionUp(n int) {
 	if n > t.scrollBottom-t.scrollTop+1 {
 		n = t.scrollBottom - t.scrollTop + 1
 	}
+	if t.scrollTop == 0 && !t.altScreen {
+		t.scrollBase += n
+	}
+	t.graphicsScrollUpLocked(t.scrollTop, t.scrollBottom, n)
 	for i := 0; i < n; i++ {
 		if t.scrollTop == 0 && !t.altScreen && t.cfg.MaxScrollback > 0 {
 			line := make([]Cell, t.cfg.Cols)
@@ -218,6 +265,7 @@ func (t *Terminal) scrollRegionUp(n int) {
 		}
 		t.grid.scrollUp(t.scrollTop, t.scrollBottom, 1)
 	}
+	t.pruneScrollbackGraphicsLocked()
 }
 
 func (t *Terminal) scrollRegionDown(n int) {
@@ -227,6 +275,7 @@ func (t *Terminal) scrollRegionDown(n int) {
 	if n > t.scrollBottom-t.scrollTop+1 {
 		n = t.scrollBottom - t.scrollTop + 1
 	}
+	t.graphicsScrollDownLocked(t.scrollTop, t.scrollBottom, n)
 	t.grid.scrollDown(t.scrollTop, t.scrollBottom, n)
 }
 
@@ -261,4 +310,5 @@ func (t *Terminal) reset() {
 	t.scrollTop = 0
 	t.scrollBottom = t.cfg.Rows - 1
 	t.altGrid = nil
+	t.clearGraphicsLocked()
 }

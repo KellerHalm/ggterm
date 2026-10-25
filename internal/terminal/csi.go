@@ -33,11 +33,15 @@ func (t *Terminal) executeCSI(cmd byte, params []int) {
 		t.eraseInLine(t.parser.param(0, 0))
 	case 'L':
 		if t.inScrollRegion() {
-			t.grid.insertLines(t.cursor.Row, t.scrollBottom, t.parser.param(0, 1))
+			count := t.parser.param(0, 1)
+			t.graphicsScrollDownLocked(t.cursor.Row, t.scrollBottom, count)
+			t.grid.insertLines(t.cursor.Row, t.scrollBottom, count)
 		}
 	case 'M':
 		if t.inScrollRegion() {
-			t.grid.deleteLines(t.cursor.Row, t.scrollBottom, t.parser.param(0, 1))
+			count := t.parser.param(0, 1)
+			t.graphicsDeleteLinesLocked(t.cursor.Row, t.scrollBottom, count)
+			t.grid.deleteLines(t.cursor.Row, t.scrollBottom, count)
 		}
 	case 'P':
 		t.grid.deleteChars(t.cursor.Row, t.cursor.Col, t.parser.param(0, 1))
@@ -124,6 +128,7 @@ func (t *Terminal) eraseInDisplay(mode int) {
 	case 3:
 		if !t.altScreen {
 			t.scrollback = t.scrollback[:0]
+			t.pruneScrollbackGraphicsLocked()
 		}
 	}
 }

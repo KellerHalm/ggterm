@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -29,6 +30,11 @@ type paneCacheEntry struct {
 	cursor      terminal.Cursor
 	cursorWidth int
 	blink       bool
+	graphicKeys []uint64
+}
+
+type graphicCacheEntry struct {
+	image *ebiten.Image
 }
 
 func (g *game) cachedPane(layout mux.PaneLayout) *paneCacheEntry {
@@ -68,23 +74,87 @@ func (g *game) cachedPane(layout mux.PaneLayout) *paneCacheEntry {
 		}
 	}
 	g.drawSnapshot(image, snap, content)
+	g.drawPaneGraphics(image, snap.Images, false)
 	blink := snapshotBlinking(snap, content)
 	if blink {
 		key.blinkOn = blinkOn
 	}
 
+	graphicKeys := make([]uint64, 0, len(snap.Images))
+	for _, placement := range snap.Images {
+		if placement.Graphic != nil {
+			graphicKeys = append(graphicKeys, placement.Graphic.Key)
+		}
+	}
 	entry = &paneCacheEntry{
 		key:         key,
 		image:       image,
 		cursor:      snap.Cursor,
 		cursorWidth: cursorWidth(snap, content),
 		blink:       blink,
+		graphicKeys: graphicKeys,
 	}
 	if g.paneCache == nil {
 		g.paneCache = make(map[int]*paneCacheEntry)
 	}
 	g.paneCache[id] = entry
 	return entry
+}
+
+// graphicImage uploads a decoded bitmap to the GPU once and returns the
+// cached texture. Graphic.Key is unique per transmitted image, so panes and
+// daemon frames can share textures safely.
+func (g *game) graphicImage(graphic *terminal.Graphic) *ebiten.Image {
+	if graphic == nil || graphic.Width <= 0 || graphic.Height <= 0 {
+		return nil
+	}
+	if len(graphic.Pix) < graphic.Width*graphic.Height*4 {
+		return nil
+	}
+	if g.graphicCache == nil {
+		g.graphicCache = make(map[uint64]*graphicCacheEntry)
+	}
+	if entry := g.graphicCache[graphic.Key]; entry != nil {
+		return entry.image
+	}
+	source := &image.NRGBA{
+		Pix:    graphic.Pix,
+		Stride: graphic.Width * 4,
+		Rect:   image.Rect(0, 0, graphic.Width, graphic.Height),
+	}
+	texture := ebiten.NewImageFromImage(source)
+	g.graphicCache[graphic.Key] = &graphicCacheEntry{image: texture}
+	return texture
+}
+
+func (g *game) pruneGraphicCache() {
+	if len(g.graphicCache) == 0 {
+		return
+	}
+	seen := make(map[uint64]bool)
+	for _, entry := range g.paneCache {
+		for _, key := range entry.graphicKeys {
+			seen[key] = true
+		}
+	}
+	for key, entry := range g.graphicCache {
+		if seen[key] {
+			continue
+		}
+		if entry.image != nil {
+			entry.image.Deallocate()
+		}
+		delete(g.graphicCache, key)
+	}
+}
+
+func (g *game) clearGraphicCache() {
+	for key, entry := range g.graphicCache {
+		if entry.image != nil {
+			entry.image.Deallocate()
+		}
+		delete(g.graphicCache, key)
+	}
 }
 
 // cursorWidth returns the number of cells the cursor should cover: two for a

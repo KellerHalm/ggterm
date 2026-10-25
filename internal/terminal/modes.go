@@ -32,6 +32,7 @@ func (t *Terminal) switchAltScreen(enable bool) {
 	if enable == t.altScreen {
 		return
 	}
+	t.clearAltGraphicsLocked()
 	if enable {
 		if t.altGrid == nil {
 			t.altGrid = newGrid(t.cfg.Rows, t.cfg.Cols)

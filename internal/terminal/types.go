@@ -56,6 +56,11 @@ type Config struct {
 	Cols, Rows    int
 	MaxScrollback int
 	TabWidth      int
+
+	// CellWidth and CellHeight are the approximate pixel dimensions of one
+	// character cell. They are used for image placement when the application
+	// does not specify a size in cells.
+	CellWidth, CellHeight int
 }
 
 type Snapshot struct {
@@ -66,4 +71,5 @@ type Snapshot struct {
 	ScrollbackLen int
 	ScrollOffset  int
 	AltScreen     bool
+	Images        []ImagePlacement
 }

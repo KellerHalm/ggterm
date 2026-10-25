@@ -10,6 +10,7 @@ const (
 	stateEscapeCharset
 	stateCSI
 	stateOSC
+	stateAPC
 	stateIgnore
 )
 
@@ -18,6 +19,10 @@ type parser struct {
 	params []int
 	inter  []byte
 	oscBuf []byte
+
+	apcBuf      []byte
+	apcEsc      bool
+	apcOverflow bool
 }
 
 func newParser() *parser {
@@ -29,6 +34,9 @@ func (p *parser) reset() {
 	p.params = p.params[:0]
 	p.inter = p.inter[:0]
 	p.oscBuf = p.oscBuf[:0]
+	p.apcBuf = p.apcBuf[:0]
+	p.apcEsc = false
+	p.apcOverflow = false
 }
 
 func (p *parser) parseParams(data []byte) []int {

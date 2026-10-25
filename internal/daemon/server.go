@@ -292,6 +292,8 @@ func (s *Server) dispatch(client *clientConn, req request) bool {
 		m.WriteInput(req.Data)
 	case requestResize:
 		client.setSize(req.Cols, req.Rows)
+	case requestCellSize:
+		m.SetCellSize(req.CellW, req.CellH)
 	case requestScroll:
 		client.setOffset(req.PaneID, req.Offset)
 	case requestSplit:

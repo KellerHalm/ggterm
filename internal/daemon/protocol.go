@@ -9,7 +9,7 @@ import (
 
 // ProtocolVersion is bumped whenever the wire format or message semantics
 // change in an incompatible way.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 const defaultFrameInterval = time.Second / 30
 
@@ -20,6 +20,7 @@ const (
 
 	requestInput     = "input"
 	requestResize    = "resize"
+	requestCellSize  = "cell_size"
 	requestScroll    = "scroll"
 	requestSplit     = "split"
 	requestClosePane = "close_pane"
@@ -48,6 +49,8 @@ type request struct {
 	Data   []byte
 	Cols   int
 	Rows   int
+	CellW  int
+	CellH  int
 	Dir    int
 	Index  int
 	PaneID int

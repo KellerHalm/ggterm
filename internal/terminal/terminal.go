@@ -42,6 +42,16 @@ type Terminal struct {
 	responses  [][]byte
 
 	revision uint64
+
+	cellW, cellH int
+	scrollBase   int
+
+	graphics       map[uint32]*Graphic
+	placements     []graphicPlacement
+	graphicBytes   int
+	imageNumbers   map[uint32]uint32
+	nextGraphicID  uint32
+	pendingGraphic *kittyPending
 }
 
 func New(cfg Config) *Terminal {
@@ -60,6 +70,13 @@ func New(cfg Config) *Terminal {
 	if cfg.TabWidth <= 0 {
 		cfg.TabWidth = 8
 	}
+	cellW, cellH := cfg.CellWidth, cfg.CellHeight
+	if cellW <= 0 {
+		cellW = defaultGraphicCellW
+	}
+	if cellH <= 0 {
+		cellH = defaultGraphicCellH
+	}
 	t := &Terminal{
 		cfg:          cfg,
 		grid:         newGrid(cfg.Rows, cfg.Cols),
@@ -68,8 +85,27 @@ func New(cfg Config) *Terminal {
 		autowrap:     true,
 		scrollBottom: cfg.Rows - 1,
 		parser:       newParser(),
+		cellW:        cellW,
+		cellH:        cellH,
 	}
 	return t
+}
+
+// SetCellSize tells the emulator the current pixel size of one character
+// cell. Images that do not specify their size in cells are scaled with it, and
+// the cursor movement after a Kitty placement follows the same metrics.
+func (t *Terminal) SetCellSize(width, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cellW == width && t.cellH == height {
+		return
+	}
+	t.cellW, t.cellH = width, height
+	t.recomputeGraphicCellsLocked()
+	t.revision++
 }
 
 func (t *Terminal) Write(p []byte) (int, error) {
@@ -184,6 +220,7 @@ func (t *Terminal) Snapshot(scrollOffset int) Snapshot {
 		ScrollbackLen: sbLen,
 		ScrollOffset:  scrollOffset,
 		AltScreen:     t.altScreen,
+		Images:        t.snapshotImagesLocked(scrollOffset),
 	}
 }
 
@@ -262,6 +299,8 @@ func (t *Terminal) processSequenceByte(b byte) {
 		t.handleCSI(b)
 	case stateOSC:
 		t.handleOSC(b)
+	case stateAPC:
+		t.handleAPC(b)
 	case stateIgnore:
 		t.ignoreSequenceByte(b)
 	}

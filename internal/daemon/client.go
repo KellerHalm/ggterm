@@ -212,6 +212,14 @@ func (c *Client) Empty() bool {
 	return c.empty
 }
 
+// SetCellSize tells the daemon how large one character cell is in pixels.
+func (c *Client) SetCellSize(width, height int) {
+	if width <= 0 || height <= 0 {
+		return
+	}
+	c.send(request{Kind: requestCellSize, CellW: width, CellH: height})
+}
+
 // WriteInput sends keyboard input to the focused pane.
 func (c *Client) WriteInput(data []byte) {
 	if len(data) == 0 {

@@ -28,6 +28,7 @@ const (
 	PreviewDir
 	PreviewText
 	PreviewImage
+	PreviewVideo
 	PreviewBinary
 	PreviewError
 )
@@ -65,6 +66,10 @@ func buildPreview(entry Entry, showHidden bool) Preview {
 	if entry.Size <= 0 {
 		preview.Kind = PreviewBinary
 		preview.Message = "empty file"
+		return preview
+	}
+	if IsVideoPath(entry.Path) {
+		preview.Kind = PreviewVideo
 		return preview
 	}
 	if IsImagePath(entry.Path) {

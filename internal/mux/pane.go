@@ -122,6 +122,7 @@ func (p *Pane) wait() {
 	p.exitCode = code
 	p.exitErr = err
 	p.mu.Unlock()
+	p.term.Close()
 	close(p.done)
 }
 
@@ -271,6 +272,7 @@ func (p *Pane) Close() error {
 	var err error
 	p.closeOnce.Do(func() {
 		err = p.sess.Close()
+		p.term.Close()
 	})
 	return err
 }

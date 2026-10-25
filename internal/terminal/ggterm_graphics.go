@@ -18,6 +18,13 @@ type ggtermGraphics struct {
 	z      int
 	path   string
 	move   bool
+
+	loop        bool
+	autoplay    bool
+	offset      float64
+	position    float64
+	hasOffset   bool
+	hasPosition bool
 }
 
 func (t *Terminal) handleGgterm(data []byte) {
@@ -35,11 +42,15 @@ func (t *Terminal) handleGgterm(data []byte) {
 		if command.id != 0 {
 			t.removeGraphicLocked(command.id)
 		}
+	case "video":
+		t.startVideoLocked(&command)
+	case "video_play", "video_pause", "video_seek", "video_stop":
+		t.controlVideoLocked(command.action, &command)
 	}
 }
 
 func parseGgtermGraphics(control []byte) ggtermGraphics {
-	command := ggtermGraphics{action: "display", move: true}
+	command := ggtermGraphics{action: "display", move: true, autoplay: true}
 	for _, field := range strings.Split(string(control), ",") {
 		field = strings.TrimSpace(field)
 		if field == "" {
@@ -74,6 +85,16 @@ func parseGgtermGraphics(control []byte) ggtermGraphics {
 			command.path = value
 		case "move":
 			command.move = value != "0" && !strings.EqualFold(value, "false")
+		case "loop":
+			command.loop = value != "0" && !strings.EqualFold(value, "false")
+		case "play", "autoplay":
+			command.autoplay = value != "0" && !strings.EqualFold(value, "false")
+		case "offset":
+			command.offset = parseFloat(value)
+			command.hasOffset = true
+		case "position":
+			command.position = parseFloat(value)
+			command.hasPosition = true
 		}
 	}
 	return command

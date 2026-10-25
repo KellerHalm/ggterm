@@ -187,6 +187,27 @@ func TestModelTextAndImagePreview(t *testing.T) {
 	}
 }
 
+func TestModelVideoPreview(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "clip.mp4"), "not a real video")
+	model, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectPath(t, model, filepath.Join(root, "clip.mp4"))
+	if preview := model.Preview(); preview.Kind != PreviewVideo {
+		t.Fatalf("preview = %+v, want video", preview)
+	}
+	for _, path := range []string{"a.mp4", "b.MKV", "c.webm", "d.mov", "e.m4v"} {
+		if !IsVideoPath(path) {
+			t.Errorf("IsVideoPath(%q) = false", path)
+		}
+	}
+	if IsVideoPath("image.png") || IsVideoPath("notes.txt") {
+		t.Error("non-video path was classified as video")
+	}
+}
+
 func TestModelBinaryPreview(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "data.bin"), []byte{0, 1, 2, 3}, 0o644); err != nil {

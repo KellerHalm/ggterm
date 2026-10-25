@@ -53,6 +53,8 @@ type Terminal struct {
 	imageNumbers   map[uint32]uint32
 	nextGraphicID  uint32
 	pendingGraphic *kittyPending
+
+	videos map[uint32]*videoStream
 }
 
 func New(cfg Config) *Terminal {

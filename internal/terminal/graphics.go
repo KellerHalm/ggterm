@@ -165,6 +165,9 @@ func (t *Terminal) allocGraphicIDLocked() uint32 {
 }
 
 func (t *Terminal) storeGraphicLocked(id uint32, pixels graphicPixels) (*Graphic, error) {
+	if id != 0 {
+		t.stopVideoLocked(id)
+	}
 	if pixels.width <= 0 || pixels.height <= 0 {
 		return nil, errors.New("EINVAL:image has invalid dimensions")
 	}
@@ -267,6 +270,7 @@ func (t *Terminal) evictOldestUnreferencedLocked() bool {
 }
 
 func (t *Terminal) removeGraphicLocked(id uint32) {
+	t.stopVideoLocked(id)
 	graphic := t.graphics[id]
 	if graphic == nil {
 		return
@@ -313,6 +317,7 @@ func (t *Terminal) dropUnreferencedIDsLocked(ids map[uint32]bool) {
 }
 
 func (t *Terminal) clearAltGraphicsLocked() {
+	t.stopAllVideosLocked(true)
 	ids := make(map[uint32]bool)
 	for _, placement := range t.placements {
 		if placement.alt {
@@ -325,6 +330,7 @@ func (t *Terminal) clearAltGraphicsLocked() {
 }
 
 func (t *Terminal) clearGraphicsLocked() {
+	t.stopAllVideosLocked(false)
 	t.graphics = nil
 	t.placements = nil
 	t.graphicBytes = 0
@@ -712,6 +718,14 @@ func parseUint32(value string) uint32 {
 		return 0
 	}
 	return uint32(n)
+}
+
+func parseFloat(value string) float64 {
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func parseInt(value string) int {

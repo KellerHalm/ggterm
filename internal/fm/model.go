@@ -429,6 +429,17 @@ func subsequence(needle, haystack string) bool {
 	return false
 }
 
+// IsVideoPath reports whether path has an extension handled by the video
+// preview. The file manager only detects the type; decoding is done by the UI.
+func IsVideoPath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".wmv", ".flv",
+		".mpg", ".mpeg", ".m2ts", ".ts", ".ogv", ".3gp":
+		return true
+	}
+	return false
+}
+
 // IsImagePath reports whether path has an extension decoded by the preview.
 func IsImagePath(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {

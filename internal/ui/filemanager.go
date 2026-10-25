@@ -17,6 +17,7 @@ import (
 
 	"ggterm/internal/fm"
 	"ggterm/internal/mux"
+	"ggterm/internal/video"
 )
 
 type fmPrompt uint8
@@ -62,6 +63,13 @@ type fileManager struct {
 	imageKey  string
 	imagePath string
 
+	video          *video.Player
+	videoPath      string
+	videoErr       error
+	videoImage     *ebiten.Image
+	videoSeq       uint64
+	previewVisible bool
+
 	lastClick     time.Time
 	lastClickPath string
 }
@@ -79,6 +87,79 @@ func (f *fileManager) close() {
 		f.image.Deallocate()
 		f.image = nil
 	}
+	f.stopVideo()
+}
+
+func (f *fileManager) stopVideo() {
+	if f.video != nil {
+		f.video.Close()
+		f.video = nil
+	}
+	if f.videoImage != nil {
+		f.videoImage.Deallocate()
+		f.videoImage = nil
+	}
+	f.videoPath = ""
+	f.videoErr = nil
+	f.videoSeq = 0
+}
+
+// syncVideo keeps the preview player in step with the selected entry. Opening
+// a decoder is cheap enough to do inline: ffprobe and the first ffmpeg frame
+// take a few dozen milliseconds.
+func (f *fileManager) syncVideo() {
+	entry, ok := f.model.Selected()
+	if !f.previewVisible || !ok || f.model.Preview().Kind != fm.PreviewVideo {
+		if f.videoPath != "" {
+			f.stopVideo()
+		}
+		return
+	}
+	if entry.Path == f.videoPath {
+		return
+	}
+	f.stopVideo()
+	f.videoPath = entry.Path
+	player, err := video.Open(entry.Path, video.Options{
+		MaxDimension: 960,
+		MaxFPS:       30,
+		Loop:         true,
+	})
+	if err != nil {
+		f.videoErr = err
+		return
+	}
+	f.video = player
+	f.videoErr = nil
+	f.videoSeq = 0
+}
+
+func (f *fileManager) updateVideoFrame() {
+	if f.video == nil {
+		return
+	}
+	if f.video.State().Stopped {
+		if f.videoImage != nil {
+			f.videoImage.Deallocate()
+			f.videoImage = nil
+		}
+		f.videoSeq = 0
+		return
+	}
+	frame, ok := f.video.Frame()
+	if !ok || frame.Seq == f.videoSeq {
+		return
+	}
+	if f.videoImage == nil ||
+		f.videoImage.Bounds().Dx() != frame.Width ||
+		f.videoImage.Bounds().Dy() != frame.Height {
+		if f.videoImage != nil {
+			f.videoImage.Deallocate()
+		}
+		f.videoImage = ebiten.NewImage(frame.Width, frame.Height)
+	}
+	f.videoImage.WritePixels(frame.Pix)
+	f.videoSeq = frame.Seq
 }
 
 func (g *game) toggleFileManager(view mux.View) {
@@ -107,6 +188,8 @@ func (g *game) toggleFileManager(view mux.View) {
 
 func (g *game) handleFileManagerInput() error {
 	files := g.files
+	files.syncVideo()
+	files.updateVideoFrame()
 	mods := currentModifiers()
 	keys := inpututil.AppendJustPressedKeys(g.keys[:0])
 	g.keys = keys
@@ -239,6 +322,22 @@ func (g *game) handleFileManagerInput() error {
 		case ebiten.KeyE:
 			if entry, open := files.activate(); open {
 				g.openFileManagerEntry(entry, mods.shift)
+			}
+		case ebiten.KeySpace:
+			if files.video != nil {
+				files.video.Toggle()
+			}
+		case ebiten.KeyLeftBracket:
+			if files.video != nil {
+				files.video.Seek(-videoSeekStep(mods.shift))
+			}
+		case ebiten.KeyRightBracket:
+			if files.video != nil {
+				files.video.Seek(videoSeekStep(mods.shift))
+			}
+		case ebiten.KeyS:
+			if files.video != nil {
+				files.video.Stop()
 			}
 		case ebiten.KeySlash:
 			files.openPrompt(fmPromptFilter)
@@ -449,6 +548,7 @@ func (g *game) drawFileManager(screen *ebiten.Image, view mux.View, contentY flo
 	if files == nil {
 		return
 	}
+	files.previewVisible = false
 	width := float64(view.Cols) * g.cellW
 	height := float64(g.contentRows) * g.cellH
 	if width <= 0 || height <= 0 {
@@ -491,6 +591,7 @@ func (g *game) drawFileManager(screen *ebiten.Image, view mux.View, contentY flo
 
 	showParent := available >= 44
 	showPreview := available >= 24
+	files.previewVisible = showPreview && files.listRows > 0
 	var parentW, currentW, previewW float64
 	switch {
 	case showParent && showPreview:
@@ -740,6 +841,8 @@ func (g *game) drawFileManagerPreview(screen *ebiten.Image, files *fileManager, 
 		}
 	case fm.PreviewImage:
 		g.drawFMImage(screen, files, preview, x, y, width, float64(files.listRows)*g.cellH)
+	case fm.PreviewVideo:
+		g.drawFMVideo(screen, files, x, y, width, float64(files.listRows)*g.cellH)
 	case fm.PreviewBinary:
 		drawText(screen, g.face, fitText(preview.Message, width, g.face), float32(x), float32(y), g.cellH, g.theme.Palette[3])
 		drawText(screen, g.face, fm.HumanSize(preview.Size), float32(x), float32(y+g.cellH), g.cellH, g.theme.Palette[8])
@@ -824,6 +927,78 @@ func (g *game) drawFMImage(screen *ebiten.Image, files *fileManager, preview fm.
 	op.GeoM.Scale(scale, scale)
 	op.GeoM.Translate(x+(width-drawWidth)/2, y+(height-drawHeight)/2)
 	screen.DrawImage(files.image, op)
+}
+
+func (g *game) drawFMVideo(screen *ebiten.Image, files *fileManager, x, y, width, height float64) {
+	if files.videoErr != nil {
+		drawText(screen, g.face, fitText(files.videoErr.Error(), width, g.face), float32(x), float32(y), g.cellH, g.theme.Palette[1])
+		return
+	}
+	if files.video == nil || files.videoImage == nil {
+		message := "loading video..."
+		if files.video != nil && !files.video.State().Playing {
+			message = "stopped - press space to play"
+		}
+		drawText(screen, g.face, fitText(message, width, g.face), float32(x), float32(y), g.cellH, g.theme.Palette[8])
+		return
+	}
+
+	bounds := files.videoImage.Bounds()
+	imageWidth, imageHeight := float64(bounds.Dx()), float64(bounds.Dy())
+	if imageWidth > 0 && imageHeight > 0 {
+		overlay := g.cellH
+		areaHeight := math.Max(height-overlay, 1)
+		scale := math.Min(width/imageWidth, areaHeight/imageHeight)
+		if scale > 1 {
+			scale = 1
+		}
+		drawWidth := imageWidth * scale
+		drawHeight := imageHeight * scale
+		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Scale(scale, scale)
+		op.GeoM.Translate(x+(width-drawWidth)/2, y+(areaHeight-drawHeight)/2)
+		screen.DrawImage(files.videoImage, op)
+	}
+
+	state := files.video.State()
+	label := "PAUSE"
+	if !state.Playing {
+		label = "PLAY"
+	}
+	bar := fmt.Sprintf(" %s  %s / %s   space play  [ ] seek  s stop", label,
+		formatDuration(state.Position), formatDuration(state.Info.Duration))
+	barY := y + height - g.cellH
+	if barY < y {
+		barY = y
+	}
+	vector.FillRect(screen, float32(x), float32(barY), float32(width), float32(g.cellH), g.theme.BarBackground, false)
+	if state.Info.Duration > 0 {
+		progress := float64(state.Position) / float64(state.Info.Duration)
+		progress = math.Max(0, math.Min(progress, 1))
+		vector.FillRect(screen, float32(x), float32(barY), float32(width*progress), 2, g.theme.BorderActive, false)
+	}
+	drawText(screen, g.face, fitText(bar, width, g.face), float32(x), float32(barY), g.cellH, g.theme.BarForeground)
+}
+
+func videoSeekStep(shift bool) time.Duration {
+	if shift {
+		return 30 * time.Second
+	}
+	return 5 * time.Second
+}
+
+func formatDuration(value time.Duration) string {
+	if value < 0 {
+		value = 0
+	}
+	total := int(value / time.Second)
+	hours := total / 3600
+	minutes := (total % 3600) / 60
+	seconds := total % 60
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%02d:%02d", minutes, seconds)
 }
 
 func (g *game) handleFileManagerMouse() {

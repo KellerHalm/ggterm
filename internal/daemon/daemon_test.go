@@ -201,12 +201,17 @@ func TestAttachInputOutputDetachReattach(t *testing.T) {
 	}
 	_ = client.Close()
 
-	status, err := FetchStatus(socket)
-	if err != nil {
-		t.Fatalf("FetchStatus after detach: %v", err)
-	}
-	if status.Panes != 2 || status.Attached {
-		t.Errorf("status after detach = %+v, want 2 panes and not attached", status)
+	var status Status
+	waitFor(t, "daemon to detach the client", func() bool {
+		next, err := FetchStatus(socket)
+		if err != nil {
+			return false
+		}
+		status = next
+		return !next.Attached
+	})
+	if status.Panes != 2 {
+		t.Errorf("status after detach = %+v, want 2 panes", status)
 	}
 
 	again, err := Attach(socket, 80, 24)

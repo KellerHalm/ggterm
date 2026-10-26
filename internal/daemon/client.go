@@ -282,7 +282,9 @@ func (c *Client) ToggleBroadcast() bool {
 	return enabled
 }
 
-// Detach leaves the daemon running and reports success.
+// Detach leaves the daemon running and reports success. It waits briefly for
+// the daemon to acknowledge the request by closing the connection so that a
+// following status query observes the detached state.
 func (c *Client) Detach() bool {
 	c.mu.Lock()
 	closed := c.err != nil
@@ -291,6 +293,10 @@ func (c *Client) Detach() bool {
 		return false
 	}
 	c.send(request{Kind: requestDetach})
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+	}
 	return true
 }
 

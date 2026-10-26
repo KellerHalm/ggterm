@@ -29,9 +29,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install Linux window dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
       - name: Build
         shell: bash
         run: |
@@ -39,24 +36,34 @@ jobs:
           commit="${GITHUB_SHA::7}"
           date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           mkdir -p dist
-          go build -trimpath \
-            -ldflags "-s -w -X ggterm/internal/version.Version=$version -X ggterm/internal/version.Commit=$commit -X ggterm/internal/version.Date=$date" \
-            -o "dist/ggterm${{ matrix.ext }}" ./cmd/ggterm
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X ggterm/internal/version.Version=$version -X ggterm/internal/version.Commit=$commit -X ggterm/internal/version.Date=$date" \
+              -o "dist/ggterm-${{ matrix.goos }}-$arch${{ matrix.ext }}" ./cmd/ggterm
+          done
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          cp "dist/ggterm" ggterm
-          tar -czf "ggterm_${version}_${{ matrix.goos }}_amd64.tar.gz" \
-            ggterm README.md CHANGELOG.md docs examples
+          for arch in amd64 arm64; do
+            cp "dist/ggterm-${{ matrix.goos }}-$arch" ggterm
+            tar -czf "ggterm_${version}_${{ matrix.goos }}_${arch}.tar.gz" \
+              ggterm README.md CHANGELOG.md docs examples
+            rm -f ggterm
+          done
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          Compress-Archive -Path dist/ggterm.exe, README.md, CHANGELOG.md, docs, examples `
-            -DestinationPath "ggterm_${version}_windows_amd64.zip"
+          foreach ($arch in @('amd64', 'arm64')) {
+            $stage = "stage-$arch"
+            New-Item -ItemType Directory -Force $stage | Out-Null
+            Copy-Item "dist/ggterm-windows-$arch.exe" "$stage/ggterm.exe"
+            Compress-Archive -Path "$stage/*", README.md, CHANGELOG.md, docs, examples `
+              -DestinationPath "ggterm_${version}_windows_${arch}.zip"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: ggterm-${{ matrix.goos }}

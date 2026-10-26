@@ -53,9 +53,11 @@ go build -trimpath \
 4. `.github/workflows/release.yml` соберёт `ggterm` на Windows, Linux и macOS,
    упакует архивы, посчитает SHA-256 и создаст GitHub Release.
 
-Архивы называются `ggterm_<version>_<os>_amd64.zip` (Windows) и
-`ggterm_<version>_<os>_amd64.tar.gz` (Linux/macOS). Внутри — бинарник, README,
-CHANGELOG, `docs/` и `examples/`.
+Для каждой ОС собираются `amd64` и `arm64`. Архивы называются
+`ggterm_<version>_<os>_<arch>.zip` (Windows) и
+`ggterm_<version>_<os>_<arch>.tar.gz` (Linux/macOS). Внутри — бинарник, README,
+CHANGELOG, `docs/` и `examples/`. Рядом с релизом лежит `checksums.txt` с
+SHA-256.
 
 ## Замечания по платформам
 

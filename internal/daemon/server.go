@@ -96,6 +96,16 @@ func (s *Server) Serve(ln net.Listener) error {
 	s.ln = ln
 	s.mu.Unlock()
 
+	// Stop may be called before Serve starts. In that case the stopped
+	// channel is already closed and s.ln was not available to Stop, so close
+	// the listener here instead of blocking in Accept forever.
+	select {
+	case <-s.stopped:
+		_ = ln.Close()
+		return nil
+	default:
+	}
+
 	go s.watchEmpty()
 	go s.saveLoop()
 	go s.pruneLoop()
